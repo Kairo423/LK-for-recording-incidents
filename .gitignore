@@ -1,0 +1,7 @@
+.env
+.md
+!README.md
+# Dependency directories node.js
+node_modules/
+.pnp
+.pnp.js
