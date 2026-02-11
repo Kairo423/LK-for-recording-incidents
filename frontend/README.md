@@ -182,3 +182,8 @@ onNavigate('page-name', optionalId)
 **Версия**: 1.0.0  
 **Дата**: Февраль 2026  
 **Статус**: Демонстрационная версия
+
+Run `cd app/frontend` to change directory. 
+Run `npm i` to install the dependencies.
+`npm i --save-dev @types/react-dom`, `npm i --save-dev @types/react` and `npm install --save-dev @types/node` if react wasn't upload automaticly. 
+Run `npm run dev` to start the development server.

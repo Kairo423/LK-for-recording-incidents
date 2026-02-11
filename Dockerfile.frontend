@@ -1,0 +1,19 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Копирование package.json фронтенда в /app
+COPY frontend/package*.json ./
+
+# Установка зависимостей
+RUN npm ci
+
+# Копирование исходного кода фронтенда
+COPY frontend/ ./
+
+# Сборка приложения (для продакшена)
+# RUN npm run build
+
+EXPOSE 3000
+
+CMD ["npm", "run", "dev:docker"]
