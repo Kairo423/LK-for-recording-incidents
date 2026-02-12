@@ -9,16 +9,6 @@ import { AnalyticsPage } from './pages/analytics';
 import { AdministrationPage } from './pages/administration';
 import { PageType, UserRole, AppState } from './types/index.ts';
 
-/*type PageType = 'login' | 'dashboard' | 'incidents' | 'incident-detail' | 'profile' | 'analytics' | 'administration';
-type UserRole = 'employee' | 'manager' | 'admin';
-
-interface AppState {
-  currentPage: PageType;
-  isAuthenticated: boolean;
-  userRole: UserRole;
-  userName: string;
-  selectedIncidentId?: number;
-}*/
 
 const App: React.FC = () => {
   const [state, setState] = useState<AppState>({
