@@ -3,9 +3,17 @@ from django.contrib.auth.models import AbstractUser
 
 
 class User(AbstractUser):
-	"""Простейшая пользовательская модель, наследующая стандартную.
-
-	Оставлена пустой для расширения в будущем (например, добавление полей).
-	Нужна чтобы значение AUTH_USER_MODEL = 'users.User' в settings.py было корректно.
-	"""
-	pass
+    """
+    Кастомная модель пользователя
+    """
+    # Добавляем дополнительные поля
+    phone = models.CharField(max_length=15, blank=True)
+    position = models.CharField(max_length=100, blank=True, verbose_name="Должность")
+    department = models.CharField(max_length=100, blank=True, verbose_name="Отдел")
+    
+    def __str__(self):
+        return self.username
+    
+    class Meta:
+        verbose_name = "Пользователь"
+        verbose_name_plural = "Пользователи"
