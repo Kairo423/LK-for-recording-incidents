@@ -180,3 +180,25 @@ def check_auth_view(request):
         'is_authenticated': True,
         'user': UserSerializer(request.user).data
     })
+
+
+@swagger_auto_schema(method='get', responses={200: openapi.Schema(type=openapi.TYPE_OBJECT, properties={'user': openapi.Schema(type=openapi.TYPE_OBJECT), 'groups': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_OBJECT)), 'role': openapi.Schema(type=openapi.TYPE_STRING)})})
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def whoami(request):
+    """Return current user info, groups and computed role (based on group membership)."""
+    user = request.user
+    groups = [{'id': g.id, 'name': g.name} for g in user.groups.all()]
+
+    # role based strictly on group membership
+    role = 'employee'
+    if user.groups.filter(name__iexact='Администратор').exists() or user.groups.filter(name__iexact='Administrator').exists():
+        role = 'admin'
+    elif user.groups.filter(name__iexact='Руководитель').exists() or user.groups.filter(name__iexact='Manager').exists():
+        role = 'manager'
+
+    return Response({
+        'user': UserSerializer(user).data,
+        'groups': groups,
+        'role': role
+    })

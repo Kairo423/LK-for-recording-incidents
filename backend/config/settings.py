@@ -109,8 +109,18 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS settings
-CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
+# Allow common dev origins by default (Vite uses 5173)
+CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173').split(',')
 CORS_ALLOW_CREDENTIALS = True
+# In DEBUG mode it's convenient to allow all origins for local development
+CORS_ALLOW_ALL_ORIGINS = DEBUG
+
+# Ensure Authorization header is allowed (django-cors-headers is case-insensitive by default,
+# but explicit list helps if custom headers are used)
+from corsheaders.defaults import default_headers
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    'authorization',
+]
 
 # REST Framework
 REST_FRAMEWORK = {
@@ -122,7 +132,8 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.TokenAuthentication',
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 10
+    'PAGE_SIZE': 10,
+    'DEFAULT_SCHEMA_CLASS': 'rest_framework.schemas.coreapi.AutoSchema'
 }
 
 # Custom user model

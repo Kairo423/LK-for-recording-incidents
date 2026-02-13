@@ -48,27 +48,43 @@ class RegisterSerializer(serializers.ModelSerializer):
         return user
 
 class LoginSerializer(serializers.Serializer):
-    """Сериализатор для входа"""
-    username = serializers.CharField(required=True)
+    """Сериализатор для входа.
+
+    Поддерживает аутентификацию по email или по username. Фронтенд может посылать поле
+    `email` и `password` (предпочтительно), либо `username` и `password`.
+    """
+    username = serializers.CharField(required=False)
+    email = serializers.EmailField(required=False)
     password = serializers.CharField(required=True, write_only=True)
 
     def validate(self, attrs):
         username = attrs.get('username')
+        email = attrs.get('email')
         password = attrs.get('password')
 
-        if username and password:
-            user = authenticate(username=username, password=password)
-            
-            if not user:
+        if not password or (not username and not email):
+            raise serializers.ValidationError("Необходимо указать email/username и пароль")
+
+        # Если указан email — найдём username по нему (если пользователь существует)
+        if email and not username:
+            try:
+                user_obj = User.objects.filter(email__iexact=email).first()
+                if not user_obj:
+                    raise serializers.ValidationError("Неверное имя пользователя или пароль")
+                username = user_obj.get_username()
+            except Exception:
                 raise serializers.ValidationError("Неверное имя пользователя или пароль")
-            
-            if not user.is_active:
-                raise serializers.ValidationError("Пользователь не активен")
-            
-            attrs['user'] = user
-            return attrs
-        else:
-            raise serializers.ValidationError("Необходимо указать имя пользователя и пароль")
+
+        user = authenticate(username=username, password=password)
+
+        if not user:
+            raise serializers.ValidationError("Неверное имя пользователя или пароль")
+
+        if not user.is_active:
+            raise serializers.ValidationError("Пользователь не активен")
+
+        attrs['user'] = user
+        return attrs
 
 class GroupSerializer(serializers.Serializer):
     """Сериализатор для групп пользователя"""

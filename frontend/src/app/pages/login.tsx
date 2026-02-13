@@ -4,7 +4,7 @@ import { Input } from '../components/input';
 import { Button } from '../components/button';
 
 interface LoginProps {
-  onLogin: (email: string, password: string, role: 'employee' | 'manager' | 'admin') => void;
+  onLogin: (email: string, password: string) => Promise<void> | void;
 }
 
 export const LoginPage: React.FC<LoginProps> = ({ onLogin }) => {
@@ -24,20 +24,14 @@ export const LoginPage: React.FC<LoginProps> = ({ onLogin }) => {
     }
     
     setLoading(true);
-    
-    // Имитация проверки
-    setTimeout(() => {
-      // Простая логика для демонстрации разных ролей
-      let role: 'employee' | 'manager' | 'admin' = 'employee';
-      if (email.includes('admin')) {
-        role = 'admin';
-      } else if (email.includes('manager')) {
-        role = 'manager';
-      }
-      
-      onLogin(email, password, role);
+    setError('');
+    try {
+      await onLogin(email.trim(), password);
+    } catch (err: any) {
+      setError(err?.message || 'Ошибка при входе');
+    } finally {
       setLoading(false);
-    }, 1000);
+    }
   };
   
   return (
