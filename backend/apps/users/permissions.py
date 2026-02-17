@@ -10,14 +10,17 @@ class IsAdmin(permissions.BasePermission):
         )
 
 class IsManager(permissions.BasePermission):
-    """Доступ для руководителей и администраторов"""
+    """Проверка, является ли пользователь руководителем"""
     
     def has_permission(self, request, view):
-        return request.user.is_authenticated and (
-            request.user.groups.filter(name='Руководитель').exists() or
-            request.user.groups.filter(name='Администратор').exists() or
-            request.user.is_superuser
-        )
+        return request.user.is_authenticated and request.user.groups.filter(name='Руководитель').exists()
+    
+    
+class IsEmployee(permissions.BasePermission):
+    """Проверка, является ли пользователь сотрудником"""
+    
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and request.user.groups.filter(name='Сотрудник').exists()
 
 class IsEmployeeOrReadOnly(permissions.BasePermission):
     """Сотрудник может только читать, руководитель и админ могут изменять"""

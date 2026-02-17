@@ -7,8 +7,8 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.contrib.auth import get_user_model
 from django.db.models import Q
 from .serializers import (
-    UserSerializer, RegisterSerializer, 
-    LoginSerializer, GroupSerializer
+    UserSerializer, UserCreateUpdateSerializer, GroupSerializer,
+    UserProfileSerializer, DepartmentSerializer
 )
 from .permissions import IsManager, IsAdmin, IsEmployeeOrReadOnly
 
@@ -18,19 +18,23 @@ User = get_user_model()
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
-@swagger_auto_schema(method='post', request_body=RegisterSerializer, responses={201: UserSerializer})
+@swagger_auto_schema(method='post', request_body=UserCreateUpdateSerializer, responses={201: UserSerializer})
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def register_view(request):
-    """Регистрация нового пользователя"""
-    serializer = RegisterSerializer(data=request.data)
+    """Регистрация нового пользователя.
+
+    Создание пользователя делегируется сериализатору `UserCreateUpdateSerializer`.
+    Обычно регистрацией и назначением групп занимается админ через админку;
+    endpoint оставлен для совместимости/tests.
+    """
+    serializer = UserCreateUpdateSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
         token, _ = Token.objects.get_or_create(user=user)
-        
-        # Получаем группы пользователя
+
         groups = [{'id': g.id, 'name': g.name} for g in user.groups.all()]
-        
+
         return Response({
             'user': UserSerializer(user).data,
             'token': token.key,
@@ -39,34 +43,49 @@ def register_view(request):
         }, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-@swagger_auto_schema(method='post', request_body=LoginSerializer, responses={200: UserSerializer})
+@swagger_auto_schema(method='post', request_body=openapi.Schema(type=openapi.TYPE_OBJECT, properties={'email': openapi.Schema(type=openapi.TYPE_STRING), 'username': openapi.Schema(type=openapi.TYPE_STRING), 'password': openapi.Schema(type=openapi.TYPE_STRING)}), responses={200: UserSerializer})
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login_view(request):
-    """Вход в систему"""
-    serializer = LoginSerializer(data=request.data)
-    if serializer.is_valid():
-        user = serializer.validated_data['user']
-        token, _ = Token.objects.get_or_create(user=user)
-        
-        # Получаем группы пользователя
-        groups = [{'id': g.id, 'name': g.name} for g in user.groups.all()]
-        
-        # Определяем роль
-        role = 'employee'
-        if user.groups.filter(name='Администратор').exists():
-            role = 'admin'
-        elif user.groups.filter(name='Руководитель').exists():
-            role = 'manager'
-        
-        return Response({
-            'user': UserSerializer(user).data,
-            'token': token.key,
-            'groups': groups,
-            'role': role,
-            'message': 'Вход выполнен успешно'
-        })
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    """Вход в систему — поддерживается аутентификация по email или username.
+
+    Ожидаемые поля: `password` и `email` или `username`.
+    """
+    data = request.data
+    username = data.get('username')
+    email = data.get('email')
+    password = data.get('password')
+
+    if not password or (not username and not email):
+        return Response({'non_field_errors': ['Необходимо указать email/username и пароль']}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Если указан email — найдем username
+    if email and not username:
+        user_obj = User.objects.filter(email__iexact=email).first()
+        if not user_obj:
+            return Response({'non_field_errors': ['Неверное имя пользователя или пароль']}, status=status.HTTP_400_BAD_REQUEST)
+        username = user_obj.get_username()
+
+    from django.contrib.auth import authenticate
+    user = authenticate(username=username, password=password)
+    if not user:
+        return Response({'non_field_errors': ['Неверное имя пользователя или пароль']}, status=status.HTTP_400_BAD_REQUEST)
+
+    token, _ = Token.objects.get_or_create(user=user)
+    groups = [{'id': g.id, 'name': g.name} for g in user.groups.all()]
+    role = 'employee'
+    if user.groups.filter(name__iexact='Администратор').exists():
+        role = 'admin'
+    elif user.groups.filter(name__iexact='Руководитель').exists():
+        role = 'manager'
+
+    return Response({
+        'user': UserSerializer(user).data,
+        'token': token.key,
+        'groups': groups,
+        'role': role,
+        'message': 'Вход выполнен успешно'
+    })
 
 @swagger_auto_schema(method='post', responses={200: openapi.Schema(type=openapi.TYPE_OBJECT, properties={'message': openapi.Schema(type=openapi.TYPE_STRING)})})
 @api_view(['POST'])

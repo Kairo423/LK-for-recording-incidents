@@ -1,10 +1,12 @@
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, os.path.join(BASE_DIR, 'apps'))
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-default-key')
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
@@ -25,9 +27,10 @@ INSTALLED_APPS = [
     'corsheaders',
     'drf_yasg',
     
-    # Local apps
+    # Local apps (use full python package paths for apps inside the `apps` package)
     'apps.users',
     'apps.api',
+    'apps.incidents',
     # Project config (management commands, startup helpers)
     'config',
 ]
@@ -135,6 +138,3 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 10,
     'DEFAULT_SCHEMA_CLASS': 'rest_framework.schemas.coreapi.AutoSchema'
 }
-
-# Custom user model
-AUTH_USER_MODEL = 'users.User'

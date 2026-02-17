@@ -1,96 +1,154 @@
 from rest_framework import serializers
-from django.contrib.auth import authenticate, get_user_model
-from django.contrib.auth.password_validation import validate_password
-from rest_framework.authtoken.models import Token
-from .models import User
+from django.contrib.auth.models import User, Group
+from .models import UserProfile, Department
 
-User = get_user_model()
+
+class GroupSerializer(serializers.ModelSerializer):
+    """Сериализатор для групп (ролей)"""
+    class Meta:
+        model = Group
+        fields = ['id', 'name']
+
+
+class DepartmentSerializer(serializers.ModelSerializer):
+    """Сериализатор для подразделений"""
+    manager_name = serializers.CharField(source='manager.profile.full_name', read_only=True)
+    children_count = serializers.IntegerField(source='children.count', read_only=True)
+    
+    class Meta:
+        model = Department
+        fields = ['id', 'name', 'parent_department', 'manager', 'manager_name', 
+                  'children_count', 'created_at']
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    """Сериализатор для профиля пользователя"""
+    class Meta:
+        model = UserProfile
+        fields = ['patronymic', 'department', 'position', 'phone', 'full_name']
+
 
 class UserSerializer(serializers.ModelSerializer):
     """Сериализатор для пользователя"""
+    profile = UserProfileSerializer(read_only=True)
+    groups = GroupSerializer(many=True, read_only=True)
+    full_name = serializers.CharField(source='profile.full_name', read_only=True)
+    department_name = serializers.CharField(source='profile.department.name', read_only=True)
+    
     class Meta:
         model = User
-        fields = ('id', 'username', 'email', 'first_name', 'last_name', 
-                  'position', 'department', 'phone', 'is_superuser')
-        read_only_fields = ('id', 'is_superuser')
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 
+                  'profile', 'groups', 'full_name', 'department_name', 
+                  'is_active', 'last_login']
 
-class RegisterSerializer(serializers.ModelSerializer):
-    """Сериализатор для регистрации"""
-    password = serializers.CharField(
-        write_only=True,
-        required=True,
-        validators=[validate_password]
+
+class UserCreateUpdateSerializer(serializers.ModelSerializer):
+    """Сериализатор для создания/обновления пользователя"""
+    patronymic = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    department_id = serializers.IntegerField(write_only=True)
+    position = serializers.CharField(write_only=True)
+    phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    group_ids = serializers.ListField(
+        child=serializers.IntegerField(), 
+        write_only=True, 
+        required=False,
+        help_text="IDs групп (ролей)"
     )
-    password2 = serializers.CharField(write_only=True, required=True)
-
+    
     class Meta:
         model = User
-        fields = ('username', 'password', 'password2', 'email', 
-                  'first_name', 'last_name', 'position', 'department', 'phone')
-
-    def validate(self, attrs):
-        if attrs['password'] != attrs['password2']:
-            raise serializers.ValidationError({"password": "Пароли не совпадают"})
-        return attrs
-
+        fields = ['id', 'username', 'email', 'password', 'first_name', 'last_name',
+                  'patronymic', 'department_id', 'position', 'phone', 'group_ids',
+                  'is_active']
+        extra_kwargs = {
+            'password': {'write_only': True}
+        }
+    
     def create(self, validated_data):
-        validated_data.pop('password2')
-        user = User.objects.create_user(**validated_data)
+        patronymic = validated_data.pop('patronymic', '')
+        department_id = validated_data.pop('department_id')
+        position = validated_data.pop('position')
+        phone = validated_data.pop('phone', '')
+        group_ids = validated_data.pop('group_ids', [])
         
-        # Добавляем в группу "Сотрудник" по умолчанию
-        from django.contrib.auth.models import Group
-        employee_group, _ = Group.objects.get_or_create(name='Сотрудник')
-        user.groups.add(employee_group)
+        # Создаем пользователя
+        password = validated_data.pop('password')
+        user = User(**validated_data)
+        user.set_password(password)
+        user.save()
         
-        # Создаем токен для пользователя
-        Token.objects.create(user=user)
+        # Создаем или обновляем профиль
+        department = Department.objects.get(id=department_id)
+        UserProfile.objects.update_or_create(
+            user=user,
+            defaults={
+                'patronymic': patronymic,
+                'department': department,
+                'position': position,
+                'phone': phone
+            }
+        )
+        
+        # Добавляем группы
+        if group_ids:
+            groups = Group.objects.filter(id__in=group_ids)
+            user.groups.set(groups)
         
         return user
+    
+    def update(self, instance, validated_data):
+        patronymic = validated_data.pop('patronymic', None)
+        department_id = validated_data.pop('department_id', None)
+        position = validated_data.pop('position', None)
+        phone = validated_data.pop('phone', None)
+        group_ids = validated_data.pop('group_ids', None)
+        
+        # Обновляем пользователя
+        for attr, value in validated_data.items():
+            if attr == 'password':
+                instance.set_password(value)
+            else:
+                setattr(instance, attr, value)
+        instance.save()
+        
+        # Обновляем профиль
+        if hasattr(instance, 'profile'):
+            profile = instance.profile
+            if patronymic is not None:
+                profile.patronymic = patronymic
+            if department_id is not None:
+                profile.department_id = department_id
+            if position is not None:
+                profile.position = position
+            if phone is not None:
+                profile.phone = phone
+            profile.save()
+        
+        # Обновляем группы
+        if group_ids is not None:
+            groups = Group.objects.filter(id__in=group_ids)
+            instance.groups.set(groups)
+        
+        return instance
 
-class LoginSerializer(serializers.Serializer):
-    """Сериализатор для входа.
 
-    Поддерживает аутентификацию по email или по username. Фронтенд может посылать поле
-    `email` и `password` (предпочтительно), либо `username` и `password`.
-    """
-    username = serializers.CharField(required=False)
-    email = serializers.EmailField(required=False)
-    password = serializers.CharField(required=True, write_only=True)
-
-    def validate(self, attrs):
-        username = attrs.get('username')
-        email = attrs.get('email')
-        password = attrs.get('password')
-
-        if not password or (not username and not email):
-            raise serializers.ValidationError("Необходимо указать email/username и пароль")
-
-        # Если указан email — найдём username по нему (если пользователь существует)
-        if email and not username:
-            try:
-                user_obj = User.objects.filter(email__iexact=email).first()
-                if not user_obj:
-                    raise serializers.ValidationError("Неверное имя пользователя или пароль")
-                username = user_obj.get_username()
-            except Exception:
-                raise serializers.ValidationError("Неверное имя пользователя или пароль")
-
-        user = authenticate(username=username, password=password)
-
-        if not user:
-            raise serializers.ValidationError("Неверное имя пользователя или пароль")
-
-        if not user.is_active:
-            raise serializers.ValidationError("Пользователь не активен")
-
-        attrs['user'] = user
-        return attrs
-
-class GroupSerializer(serializers.Serializer):
-    """Сериализатор для групп пользователя"""
-    def to_representation(self, instance):
-        return {
-            'id': instance.id,
-            'name': instance.name,
-            'permissions': [p.codename for p in instance.permissions.all()]
-        }
+class UserProfileUpdateSerializer(serializers.ModelSerializer):
+    """Сериализатор для обновления профиля (для раздела Профиль)"""
+    email = serializers.EmailField(source='user.email', read_only=True)
+    first_name = serializers.CharField(source='user.first_name', read_only=True)
+    last_name = serializers.CharField(source='user.last_name', read_only=True)
+    username = serializers.CharField(source='user.username', read_only=True)
+    
+    class Meta:
+        model = UserProfile
+        fields = ['username', 'email', 'first_name', 'last_name', 'patronymic',
+                  'department', 'position', 'phone']
+        read_only_fields = ['username', 'email', 'first_name', 'last_name', 
+                           'patronymic', 'department', 'position']
+    
+    def update(self, instance, validated_data):
+        # Разрешаем обновлять только phone
+        if 'phone' in validated_data:
+            instance.phone = validated_data['phone']
+            instance.save()
+        return instance

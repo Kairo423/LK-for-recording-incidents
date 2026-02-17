@@ -88,17 +88,6 @@ export const LoginPage: React.FC<LoginProps> = ({ onLogin }) => {
               Войти
             </Button>
           </form>
-          
-          {/* Подсказка для демонстрации */}
-          <div className="mt-6 pt-6 border-t border-[#E5E7EB]">
-            <p className="text-sm text-[#6B7280] mb-2">Для демонстрации используйте:</p>
-            <div className="space-y-1 text-sm">
-              <p className="text-[#6B7280]">• <strong>admin@company.com</strong> — Администратор</p>
-              <p className="text-[#6B7280]">• <strong>manager@company.com</strong> — Руководитель</p>
-              <p className="text-[#6B7280]">• <strong>user@company.com</strong> — Сотрудник</p>
-              <p className="text-[#9CA3AF] text-xs mt-2">Пароль: любой</p>
-            </div>
-          </div>
         </div>
       </div>
     </div>
