@@ -6,38 +6,10 @@ import { Input } from '../components/input';
 import { Select } from '../components/select';
 import { Modal } from '../components/modal';
 import { ConfirmDialog } from '../components/confirm-dialog';
+import { AppUser, Department} from '../types/index';
 import apiClient from '../../api/client';
 
-// Моковые данные пользователей
-// Define types used in this page
-type AppUser = {
-  id: number;
-  email: string;
-  full_name?: string;
-  fullName?: string; // legacy
-  first_name?: string;
-  last_name?: string;
-  groups?: { id: number; name: string }[];
-  department_name?: string;
-  // UI fields used in the admin table/forms
-  role?: string;
-  department?: string;
-};
-
-type Department = {
-  id: number;
-  name: string;
-  parent_department?: number | null;
-  manager?: number | null;
-  manager_name?: string | null;
-};
-
-const mockDepartments: Department[] = [
-  { id: 1, name: 'ИТ' },
-  { id: 2, name: 'Производство' },
-  { id: 3, name: 'Склад' }
-];
-
+// Моковые данные
 const mockIncidentTypes = [
   { id: 1, name: 'Авария', color: '#EF4444' },
   { id: 2, name: 'Несчастный случай', color: '#F59E0B' }
@@ -63,7 +35,7 @@ const UserFormModal: React.FC<{
     last_name: initialData?.last_name || (initialData?.full_name ? initialData.full_name.split(' ')[0] : '') || '',
     patronymic: initialData?.profile?.patronymic || initialData?.patronymic || '',
     role_id: initialData?.groups?.[0]?.id || null,
-    department_id: initialData?.profile?.department?.id || initialData?.department_id || null,
+  department_id: (initialData?.profile && typeof initialData.profile.department === 'number') ? initialData.profile.department : (initialData?.profile?.department?.id || initialData?.department_id || null),
     password: '',
     confirmPassword: '',
     position: initialData?.profile?.position || '',
@@ -73,6 +45,46 @@ const UserFormModal: React.FC<{
 
   const departmentOptions = [{ value: '', label: '— Нет —' }, ...departments.map(dept => ({ value: String(dept.id), label: dept.name }))];
   const groupOptions = [{ value: '', label: '— Выберите роль —' }, ...groups.map(g => ({ value: String(g.id), label: g.name }))];
+
+  // If parent didn't load departments/groups yet, fetch locally to ensure selects are populated
+  const [localDepartments, setLocalDepartments] = useState<Department[]>(departments);
+  const [localGroups, setLocalGroups] = useState<{ id: number; name: string }[]>(groups);
+
+  useEffect(() => {
+    let cancelled = false;
+    if ((!localDepartments || localDepartments.length === 0) && departments.length === 0) {
+      (async () => {
+        try {
+          const res = await apiClient.get('/users/departments/');
+          if (cancelled) return;
+          setLocalDepartments(res.data || []);
+        } catch (e) {
+          // ignore
+        }
+      })();
+    } else if (departments.length > 0) {
+      setLocalDepartments(departments);
+    }
+
+    if ((!localGroups || localGroups.length === 0) && groups.length === 0) {
+      (async () => {
+        try {
+          const res = await apiClient.get('/users/all-groups/');
+          if (cancelled) return;
+          setLocalGroups(res.data || []);
+        } catch (e) {
+          // ignore
+        }
+      })();
+    } else if (groups.length > 0) {
+      setLocalGroups(groups);
+    }
+
+    return () => { cancelled = true; };
+  }, [departments, groups]);
+
+  const effectiveDepartmentOptions = [{ value: '', label: '— Нет —' }, ...localDepartments.map(dept => ({ value: String(dept.id), label: dept.name }))];
+  const effectiveGroupOptions = [{ value: '', label: '— Выберите роль —' }, ...localGroups.map(g => ({ value: String(g.id), label: g.name }))];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -123,7 +135,7 @@ const UserFormModal: React.FC<{
 
         <Select
           label="Роль"
-          options={groupOptions}
+          options={effectiveGroupOptions}
           value={formData.role_id ? String(formData.role_id) : ''}
           onChange={(e) => setFormData(prev => ({ ...prev, role_id: e.target.value ? Number(e.target.value) : null }))}
           required
@@ -131,7 +143,7 @@ const UserFormModal: React.FC<{
 
         <Select
           label="Подразделение"
-          options={departmentOptions}
+          options={effectiveDepartmentOptions}
           value={formData.department_id ? String(formData.department_id) : ''}
           onChange={(e) => setFormData(prev => ({ ...prev, department_id: e.target.value ? Number(e.target.value) : null }))}
         />
@@ -347,18 +359,19 @@ export const AdministrationPage: React.FC = () => {
           email: data.email,
           password: data.password,
           first_name: data.first_name,
-          last_name: data.last_name,
-          patronymic: data.patronymic,
-          department_id: data.department_id,
-          position: data.position,
-          phone: data.phone,
-          group_ids: data.role_id ? [data.role_id] : [],
-          is_active: !!data.is_active
+          last_name: data.last_name
         };
+        if (data.patronymic) payload.patronymic = data.patronymic;
+        if (data.department_id) payload.department_id = data.department_id;
+        if (data.position) payload.position = data.position;
+        if (data.phone) payload.phone = data.phone;
+        if (data.role_id) payload.group_ids = [data.role_id];
+        if (typeof data.is_active === 'boolean') payload.is_active = !!data.is_active;
 
         const res = await apiClient.post('/users/register/', payload);
         const created = res.data?.user || res.data;
-        setUsers(prev => [...prev, created]);
+        // normalize created user shape (backend may return 'user' wrapper)
+        if (created) setUsers(prev => [...prev, created]);
         setShowUserModal(false);
       } catch (err: any) {
         console.error('Failed to create user', err);
@@ -371,22 +384,22 @@ export const AdministrationPage: React.FC = () => {
     (async () => {
       try {
         if (!editingUser) return;
-        const payload: any = {
-          email: data.email,
-          first_name: data.first_name,
-          last_name: data.last_name,
-          patronymic: data.patronymic,
-          department_id: data.department_id,
-          position: data.position,
-          phone: data.phone,
-          group_ids: data.role_id ? [data.role_id] : [],
-          is_active: !!data.is_active
-        };
+        const payload: any = {};
+        // only send fields that are present to avoid triggering validation errors
+        if (data.email) payload.email = data.email;
+        if (data.first_name) payload.first_name = data.first_name;
+        if (data.last_name) payload.last_name = data.last_name;
+        if (data.patronymic) payload.patronymic = data.patronymic;
+        if (data.department_id) payload.department_id = data.department_id;
+        if (data.position) payload.position = data.position;
+        if (data.phone) payload.phone = data.phone;
+        if (data.role_id) payload.group_ids = [data.role_id];
+        if (typeof data.is_active === 'boolean') payload.is_active = !!data.is_active;
         if (data.password) payload.password = data.password;
 
         const res = await apiClient.patch(`/users/${editingUser.id}/`, payload);
         const updated = res.data?.user || res.data;
-        setUsers(prev => prev.map(u => u.id === editingUser.id ? updated : u));
+        if (updated) setUsers(prev => prev.map(u => u.id === editingUser.id ? updated : u));
         setEditingUser(null);
       } catch (err: any) {
         console.error('Failed to edit user', err);
@@ -396,9 +409,24 @@ export const AdministrationPage: React.FC = () => {
   };
   
   const handleDeleteUser = () => {
-    console.log('Удаление пользователя:', deletingUserId);
-    setUsers(users.filter(u => u.id !== deletingUserId));
-    setDeletingUserId(null);
+    (async () => {
+      try {
+        if (deletingUserId == null) return;
+        // Instead of removing user from list, mark inactive on backend
+        const res = await apiClient.patch(`/users/${deletingUserId}/`, { is_active: false });
+        const updated = res.data?.user || res.data;
+        if (updated) {
+          setUsers(prev => prev.map(u => u.id === deletingUserId ? updated : u));
+        } else {
+          // fallback: mark locally
+          setUsers(prev => prev.map(u => u.id === deletingUserId ? { ...u, is_active: false } : u));
+        }
+        setDeletingUserId(null);
+      } catch (err: any) {
+        console.error('Failed to deactivate user', err);
+        alert('Ошибка при деактивации пользователя: ' + (err?.response?.data?.error || err?.message));
+      }
+    })();
   };
 
   const handleAddDepartment = (data: any) => {

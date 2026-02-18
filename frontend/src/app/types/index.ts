@@ -20,6 +20,28 @@ export type IncidentType =
   | 'Пожар' 
   | 'ДТП';
 
+export type AppUser = {
+  id: number;
+  email: string;
+  full_name?: string;
+  fullName?: string; // legacy
+  first_name?: string;
+  last_name?: string;
+  groups?: { id: number; name: string }[];
+  department_name?: string;
+  // UI fields used in the admin table/forms
+  role?: string;
+  department?: string;
+};
+
+export type Department = {
+  id: number;
+  name: string;
+  parent_department?: number | null;
+  manager?: number | null;
+  manager_name?: string | null;
+};
+
 export interface Incident {
   id: number;
   number: string;

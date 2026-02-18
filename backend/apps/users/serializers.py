@@ -45,8 +45,11 @@ class UserSerializer(serializers.ModelSerializer):
 class UserCreateUpdateSerializer(serializers.ModelSerializer):
     """Сериализатор для создания/обновления пользователя"""
     patronymic = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    department_id = serializers.IntegerField(write_only=True)
-    position = serializers.CharField(write_only=True)
+    # department_id/position may be omitted during PATCH flows (partial updates)
+    # and department_id can be explicitly null from the client — treat that as
+    # "no change" on update rather than a validation error.
+    department_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    position = serializers.CharField(write_only=True, required=False, allow_blank=True)
     phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
     group_ids = serializers.ListField(
         child=serializers.IntegerField(), 
@@ -66,8 +69,8 @@ class UserCreateUpdateSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         patronymic = validated_data.pop('patronymic', '')
-        department_id = validated_data.pop('department_id')
-        position = validated_data.pop('position')
+        department_id = validated_data.pop('department_id', None)
+        position = validated_data.pop('position', 'Не указана')
         phone = validated_data.pop('phone', '')
         group_ids = validated_data.pop('group_ids', [])
         
@@ -78,7 +81,11 @@ class UserCreateUpdateSerializer(serializers.ModelSerializer):
         user.save()
         
         # Создаем или обновляем профиль
-        department = Department.objects.get(id=department_id)
+        # Если department_id не указан, назначаем дефолтное подразделение "Не назначено"
+        if department_id is None:
+            department, _ = Department.objects.get_or_create(name='Не назначено', defaults={'name': 'Не назначено'})
+        else:
+            department = Department.objects.get(id=department_id)
         UserProfile.objects.update_or_create(
             user=user,
             defaults={
@@ -116,8 +123,15 @@ class UserCreateUpdateSerializer(serializers.ModelSerializer):
             profile = instance.profile
             if patronymic is not None:
                 profile.patronymic = patronymic
+            # If department_id is provided and not null, update it. If it's null
+            # we treat it as "no change" to avoid setting a non-nullable FK to null.
             if department_id is not None:
-                profile.department_id = department_id
+                try:
+                    profile.department_id = department_id
+                except Exception:
+                    # ignore invalid department ids here; validation should
+                    # normally catch this earlier, but be defensive
+                    pass
             if position is not None:
                 profile.position = position
             if phone is not None:
