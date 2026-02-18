@@ -1,0 +1,37 @@
+# ========== ФРОНТЕНД ==========
+frontend/node_modules
+frontend/dist
+frontend/build
+frontend/coverage
+frontend/.vite
+frontend/.cache
+frontend/.temp
+frontend/*.log
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+
+# ========== Виртуальное окружение ==========
+/venv
+
+# ========== Git ==========
+.git
+.gitignore
+.gitattributes
+.github
+
+# ========== IDE ==========
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ========== Docker файлы ==========
+docker-compose*.yml
+.dockerignore
+!Dockerfile.frontend
+Dockerfile.backend

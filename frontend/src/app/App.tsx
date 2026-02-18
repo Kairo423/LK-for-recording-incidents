@@ -92,15 +92,41 @@ const App: React.FC = () => {
     }
   };
   
-  const handleNavigate = (page: PageType, incidentId?: number) => {
-    if (page === 'login') {
-      // Выход из системы
+  const handleLogout = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      
+      // Вызываем бэкенд logout для удаления токена
+      if (token) {
+        await fetch(`${API_BASE}/users/logout/`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Token ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Logout error:', error);
+    } finally {
+      // Всегда очищаем локальное состояние, даже если запрос не удался
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      
       setState({
         currentPage: 'login',
         isAuthenticated: false,
         userRole: 'employee',
-        userName: ''
+        userName: '',
+        selectedIncidentId: undefined
       });
+    }
+  };
+
+  const handleNavigate = (page: PageType, incidentId?: number) => {
+    if (page === 'login') {
+      // Выход из системы
+      handleLogout();
     } else {
       setState(prev => ({
         ...prev,

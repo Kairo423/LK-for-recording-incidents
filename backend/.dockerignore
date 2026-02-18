@@ -1,0 +1,73 @@
+# Виртуальное окружение
+venv
+env
+.env
+.venv
+ENV
+env.bak
+venv.bak
+pythonenv*
+
+# Кэш Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.tox
+.coverage
+htmlcov
+*.cover
+*.py,cover
+.hypothesis/
+
+# Базы данных
+*.sqlite3
+*.db
+*.sql
+db.sqlite3
+
+# Медиа и статика (создаются автоматически)
+media
+staticfiles
+static_root
+media_root
+
+# Логи
+logs
+*.log
+**/logs/
+
+# Файлы разработки
+.env
+.env.*
+!.env.example
+docker-compose*.yml
+Dockerfile
+.dockerignore
+
+# IDE и система
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.swp
+*.sock
+
+# Временные файлы
+tmp
+temp
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# Документация
+README.md
+docs/
+*.md
+!.env.example

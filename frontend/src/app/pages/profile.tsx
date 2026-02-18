@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User } from 'lucide-react';
 import { Card } from '../components/card';
 import { Input } from '../components/input';
 import { Button } from '../components/button';
+import apiClient from '../../api/client';
 
 interface ProfileProps {
   userName: string;
@@ -16,6 +17,37 @@ export const ProfilePage: React.FC<ProfileProps> = ({ userName }) => {
     phone: '+7 (999) 123-45-67',
     email: 'user@company.com'
   });
+
+  useEffect(() => {
+    // load profile from backend
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiClient.get('/users/profile/');
+        const data = res.data || {};
+        const user = data.user || {};
+
+        if (cancelled) return;
+
+        setFormData({
+          fullName: user.full_name || [user.first_name, user.last_name].filter(Boolean).join(' ') || userName,
+          position: (user.profile && user.profile.position) || '',
+          department: user.department_name || (user.profile && user.profile.department) || '',
+          phone: (user.profile && user.profile.phone) || '',
+          email: user.email || ''
+        });
+      } catch (err: any) {
+        console.error('Failed to load profile', err);
+        if (err && err.response && (err.response.status === 401 || err.response.status === 403)) {
+          // token expired or unauthorized — clear local state so app will return to login
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          window.location.reload();
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [userName]);
   
   const [saved, setSaved] = useState(false);
   
@@ -26,9 +58,35 @@ export const ProfilePage: React.FC<ProfileProps> = ({ userName }) => {
   
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Сохранение профиля:', formData);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
+    (async () => {
+      try {
+        const payload: any = {
+          email: formData.email,
+          phone: formData.phone
+        };
+        const res = await apiClient.patch('/users/profile/contact/', payload);
+        // optimistic success
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+
+        // update local stored user display name if server returned updated user
+        if (res.data && res.data.user) {
+          const user = res.data.user;
+          const userNameNew = user.full_name || [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username;
+          const stored = localStorage.getItem('user');
+          try {
+            const obj = stored ? JSON.parse(stored) : {};
+            obj.userName = userNameNew;
+            localStorage.setItem('user', JSON.stringify(obj));
+          } catch (e) {
+            // ignore
+          }
+        }
+      } catch (err: any) {
+        console.error('Failed to update contact', err);
+        alert('Ошибка при сохранении: ' + (err?.response?.data?.detail || err?.message || 'unknown'));
+      }
+    })();
   };
   
   return (

@@ -94,8 +94,10 @@ def logout_view(request):
     """Выход из системы"""
     try:
         request.user.auth_token.delete()
-    except:
-        pass
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     return Response({'message': 'Выход выполнен успешно'})
 
 @swagger_auto_schema(method='get', responses={200: UserSerializer})
@@ -221,3 +223,49 @@ def whoami(request):
         'groups': groups,
         'role': role
     })
+
+
+# --- New endpoint: update contact fields (email, phone) for current user ---
+contact_request_body = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    properties={
+        'email': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_EMAIL),
+        'phone': openapi.Schema(type=openapi.TYPE_STRING),
+    }
+)
+
+
+@swagger_auto_schema(method='patch', request_body=contact_request_body, responses={200: UserSerializer})
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def update_contact_view(request):
+    """Обновление контактных данных пользователя (email и/или phone).
+
+    Обновляет поле `email` у модели User и `phone` в связанном UserProfile.
+    При отсутствии профиля — операция по `phone` игнорируется.
+    """
+    user = request.user
+    data = request.data
+    updated = False
+
+    # Update email on User
+    if 'email' in data:
+        email = data.get('email')
+        if email and email != user.email:
+            user.email = email
+            user.save()
+            updated = True
+
+    # Update phone on profile (if exists)
+    if 'phone' in data:
+        phone = data.get('phone')
+        profile = getattr(user, 'profile', None)
+        if profile is not None and phone is not None:
+            profile.phone = phone
+            profile.save()
+            updated = True
+
+    if not updated:
+        return Response({'message': 'Нет изменений'}, status=status.HTTP_200_OK)
+
+    return Response({'user': UserSerializer(user).data, 'message': 'Контакты обновлены'})

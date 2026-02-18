@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
+// Use Vite env (import.meta.env). Do NOT reference `process` in browser code.
+const API_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:8000/api';
 
 const apiClient = axios.create({
     baseURL: API_URL,
@@ -9,11 +10,12 @@ const apiClient = axios.create({
     },
 });
 
-// Interceptor для добавления токена
+// Interceptor для добавления токена в формат Django TokenAuthentication
 apiClient.interceptors.request.use((config) => {
-    const token = localStorage.getItem('access_token');
+    const token = localStorage.getItem('token');
     if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
+        // Django REST Framework TokenAuthentication expects: 'Authorization: Token <key>'
+        config.headers.Authorization = `Token ${token}`;
     }
     return config;
 });
