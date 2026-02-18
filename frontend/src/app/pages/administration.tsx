@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, Save } from 'lucide-react';
 import { Card } from '../components/card';
 import { Button } from '../components/button';
@@ -6,33 +6,41 @@ import { Input } from '../components/input';
 import { Select } from '../components/select';
 import { Modal } from '../components/modal';
 import { ConfirmDialog } from '../components/confirm-dialog';
+import apiClient from '../../api/client';
 
 // Моковые данные пользователей
-const mockUsers = [
-  { id: 1, email: 'admin@company.com', fullName: 'Админов Админ Админович', role: 'Администратор', department: 'ИТ' },
-  { id: 2, email: 'manager@company.com', fullName: 'Менеджеров Менеджер Менеджерович', role: 'Руководитель', department: 'Производство' },
-  { id: 3, email: 'user@company.com', fullName: 'Иванов Иван Иванович', role: 'Сотрудник', department: 'Производство' },
-  { id: 4, email: 'user2@company.com', fullName: 'Петров Петр Петрович', role: 'Сотрудник', department: 'Склад' },
-  { id: 5, email: 'user3@company.com', fullName: 'Сидоров Сидор Сидорович', role: 'Сотрудник', department: 'Логистика' }
-];
+// Define types used in this page
+type AppUser = {
+  id: number;
+  email: string;
+  full_name?: string;
+  fullName?: string; // legacy
+  first_name?: string;
+  last_name?: string;
+  groups?: { id: number; name: string }[];
+  department_name?: string;
+  // UI fields used in the admin table/forms
+  role?: string;
+  department?: string;
+};
 
-// Моковые данные подразделений
-const mockDepartments = [
+type Department = {
+  id: number;
+  name: string;
+  parent_department?: number | null;
+  manager?: number | null;
+  manager_name?: string | null;
+};
+
+const mockDepartments: Department[] = [
   { id: 1, name: 'ИТ' },
   { id: 2, name: 'Производство' },
-  { id: 3, name: 'Склад' },
-  { id: 4, name: 'Логистика' },
-  { id: 5, name: 'Цех №1' },
-  { id: 6, name: 'Энергетика' }
+  { id: 3, name: 'Склад' }
 ];
 
-// Моковые данные типов происшествий
 const mockIncidentTypes = [
   { id: 1, name: 'Авария', color: '#EF4444' },
-  { id: 2, name: 'Несчастный случай', color: '#F59E0B' },
-  { id: 3, name: 'Технический инцидент', color: '#3B82F6' },
-  { id: 4, name: 'Пожар', color: '#DC2626' },
-  { id: 5, name: 'ДТП', color: '#8B5CF6' }
+  { id: 2, name: 'Несчастный случай', color: '#F59E0B' }
 ];
 
 const roles = [
@@ -40,32 +48,43 @@ const roles = [
   { value: 'Руководитель', label: 'Руководитель' },
   { value: 'Сотрудник', label: 'Сотрудник' }
 ];
-
 const UserFormModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (data: any) => void;
   initialData?: any;
   isEdit?: boolean;
-  departments: Array<{ id: number; name: string }>;
-}> = ({ isOpen, onClose, onSubmit, initialData, isEdit = false, departments }) => {
-  const [formData, setFormData] = useState({
+  departments: Department[];
+  groups: { id: number; name: string }[];
+}> = ({ isOpen, onClose, onSubmit, initialData, isEdit = false, departments, groups }) => {
+  const [formData, setFormData] = useState(() => ({
     email: initialData?.email || '',
-    fullName: initialData?.fullName || '',
-    role: initialData?.role || 'Сотрудник',
-    department: initialData?.department || ''
-  });
-  
+    first_name: initialData?.first_name || (initialData?.full_name ? initialData.full_name.split(' ')[1] : '') || '',
+    last_name: initialData?.last_name || (initialData?.full_name ? initialData.full_name.split(' ')[0] : '') || '',
+    patronymic: initialData?.profile?.patronymic || initialData?.patronymic || '',
+    role_id: initialData?.groups?.[0]?.id || null,
+    department_id: initialData?.profile?.department?.id || initialData?.department_id || null,
+    password: '',
+    confirmPassword: '',
+    position: initialData?.profile?.position || '',
+    phone: initialData?.profile?.phone || '',
+    is_active: typeof initialData?.is_active === 'boolean' ? initialData.is_active : true
+  }));
+
+  const departmentOptions = [{ value: '', label: '— Нет —' }, ...departments.map(dept => ({ value: String(dept.id), label: dept.name }))];
+  const groupOptions = [{ value: '', label: '— Выберите роль —' }, ...groups.map(g => ({ value: String(g.id), label: g.name }))];
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // validate password confirmation
+    if (formData.password && formData.password !== formData.confirmPassword) {
+      alert('Пароли не совпадают');
+      return;
+    }
+
     onSubmit(formData);
   };
-  
-  const departmentOptions = departments.map(dept => ({
-    value: dept.name,
-    label: dept.name
-  }));
-  
+
   return (
     <Modal
       isOpen={isOpen}
@@ -81,26 +100,82 @@ const UserFormModal: React.FC<{
           onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
           required
         />
-        <Input
-          label="ФИО"
-          value={formData.fullName}
-          onChange={(e) => setFormData(prev => ({ ...prev, fullName: e.target.value }))}
-          required
-        />
+
+        <div className="grid grid-cols-3 gap-3">
+          <Input
+            label="Фамилия"
+            value={formData.last_name}
+            onChange={(e) => setFormData(prev => ({ ...prev, last_name: e.target.value }))}
+            required
+          />
+          <Input
+            label="Имя"
+            value={formData.first_name}
+            onChange={(e) => setFormData(prev => ({ ...prev, first_name: e.target.value }))}
+            required
+          />
+          <Input
+            label="Отчество"
+            value={formData.patronymic}
+            onChange={(e) => setFormData(prev => ({ ...prev, patronymic: e.target.value }))}
+          />
+        </div>
+
         <Select
           label="Роль"
-          options={roles}
-          value={formData.role}
-          onChange={(e) => setFormData(prev => ({ ...prev, role: e.target.value }))}
+          options={groupOptions}
+          value={formData.role_id ? String(formData.role_id) : ''}
+          onChange={(e) => setFormData(prev => ({ ...prev, role_id: e.target.value ? Number(e.target.value) : null }))}
           required
         />
+
         <Select
           label="Подразделение"
           options={departmentOptions}
-          value={formData.department}
-          onChange={(e) => setFormData(prev => ({ ...prev, department: e.target.value }))}
-          required
+          value={formData.department_id ? String(formData.department_id) : ''}
+          onChange={(e) => setFormData(prev => ({ ...prev, department_id: e.target.value ? Number(e.target.value) : null }))}
         />
+
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            label="Пароль"
+            type="password"
+            value={formData.password}
+            onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
+            {...(!isEdit ? { required: true } : {})}
+          />
+          <Input
+            label="Подтверждение пароля"
+            type="password"
+            value={formData.confirmPassword}
+            onChange={(e) => setFormData(prev => ({ ...prev, confirmPassword: e.target.value }))}
+            {...(!isEdit ? { required: true } : {})}
+          />
+        </div>
+
+        <Input
+          label="Должность"
+          value={formData.position}
+          onChange={(e) => setFormData(prev => ({ ...prev, position: e.target.value }))}
+        />
+
+        <Input
+          label="Номер телефона"
+          value={formData.phone}
+          onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
+        />
+
+        <div className="flex items-center gap-2">
+          <input
+            id="is_active_checkbox"
+            type="checkbox"
+            checked={!!formData.is_active}
+            onChange={(e) => setFormData(prev => ({ ...prev, is_active: e.target.checked }))}
+            className="h-4 w-4"
+          />
+          <label htmlFor="is_active_checkbox" className="text-sm">Активный</label>
+        </div>
+
         <div className="flex gap-3 justify-end pt-4 border-t border-[#E5E7EB]">
           <Button variant="secondary" type="button" onClick={onClose}>
             Отмена
@@ -120,9 +195,13 @@ const DepartmentFormModal: React.FC<{
   onSubmit: (data: any) => void;
   initialData?: any;
   isEdit?: boolean;
-}> = ({ isOpen, onClose, onSubmit, initialData, isEdit = false }) => {
+  departments: Department[];
+  users: AppUser[];
+}> = ({ isOpen, onClose, onSubmit, initialData, isEdit = false, departments, users }) => {
   const [formData, setFormData] = useState({
-    name: initialData?.name || ''
+    name: initialData?.name || '',
+    parent_department: initialData?.parent_department || null,
+    manager: initialData?.manager || null,
   });
   
   const handleSubmit = (e: React.FormEvent) => {
@@ -144,6 +223,22 @@ const DepartmentFormModal: React.FC<{
           onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
           required
         />
+        <div>
+          <Select
+            label="Родительское подразделение"
+            options={[{ value: '', label: '— Нет —' }, ...departments.map(d => ({ value: String(d.id), label: d.name }))]}
+            value={formData.parent_department ? String(formData.parent_department) : ''}
+            onChange={(e) => setFormData(prev => ({ ...prev, parent_department: e.target.value ? Number(e.target.value) : null }))}
+          />
+        </div>
+        <div>
+          <Select
+            label="Руководитель"
+            options={[{ value: '', label: '— Нет —' }, ...users.map(u => ({ value: String(u.id), label: u.full_name || (u.first_name && u.last_name ? `${u.first_name} ${u.last_name}` : u.email) }))]}
+            value={formData.manager ? String(formData.manager) : ''}
+            onChange={(e) => setFormData(prev => ({ ...prev, manager: e.target.value ? Number(e.target.value) : null }))}
+          />
+        </div>
         <div className="flex gap-3 justify-end pt-4 border-t border-[#E5E7EB]">
           <Button variant="secondary" type="button" onClick={onClose}>
             Отмена
@@ -225,8 +320,9 @@ const IncidentTypeFormModal: React.FC<{
 
 export const AdministrationPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'users' | 'incident-types' | 'departments' | 'settings'>('users');
-  const [users, setUsers] = useState(mockUsers);
-  const [departments, setDepartments] = useState(mockDepartments);
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [groups, setGroups] = useState<{ id: number; name: string }[]>([]);
   const [incidentTypes, setIncidentTypes] = useState(mockIncidentTypes);
   const [showUserModal, setShowUserModal] = useState(false);
   const [showDepartmentModal, setShowDepartmentModal] = useState(false);
@@ -244,15 +340,59 @@ export const AdministrationPage: React.FC = () => {
   const [settingsSaved, setSettingsSaved] = useState(false);
   
   const handleAddUser = (data: any) => {
-    console.log('Добавление пользователя:', data);
-    setUsers([...users, { id: users.length + 1, ...data }]);
-    setShowUserModal(false);
+    (async () => {
+      try {
+        const payload: any = {
+          username: data.email,
+          email: data.email,
+          password: data.password,
+          first_name: data.first_name,
+          last_name: data.last_name,
+          patronymic: data.patronymic,
+          department_id: data.department_id,
+          position: data.position,
+          phone: data.phone,
+          group_ids: data.role_id ? [data.role_id] : [],
+          is_active: !!data.is_active
+        };
+
+        const res = await apiClient.post('/users/register/', payload);
+        const created = res.data?.user || res.data;
+        setUsers(prev => [...prev, created]);
+        setShowUserModal(false);
+      } catch (err: any) {
+        console.error('Failed to create user', err);
+        alert('Ошибка при создании пользователя: ' + (err?.response?.data?.error || err?.message));
+      }
+    })();
   };
   
   const handleEditUser = (data: any) => {
-    console.log('Редактирование пользователя:', data);
-    setUsers(users.map(u => u.id === editingUser.id ? { ...u, ...data } : u));
-    setEditingUser(null);
+    (async () => {
+      try {
+        if (!editingUser) return;
+        const payload: any = {
+          email: data.email,
+          first_name: data.first_name,
+          last_name: data.last_name,
+          patronymic: data.patronymic,
+          department_id: data.department_id,
+          position: data.position,
+          phone: data.phone,
+          group_ids: data.role_id ? [data.role_id] : [],
+          is_active: !!data.is_active
+        };
+        if (data.password) payload.password = data.password;
+
+        const res = await apiClient.patch(`/users/${editingUser.id}/`, payload);
+        const updated = res.data?.user || res.data;
+        setUsers(prev => prev.map(u => u.id === editingUser.id ? updated : u));
+        setEditingUser(null);
+      } catch (err: any) {
+        console.error('Failed to edit user', err);
+        alert('Ошибка при обновлении пользователя: ' + (err?.response?.data?.error || err?.message));
+      }
+    })();
   };
   
   const handleDeleteUser = () => {
@@ -262,9 +402,17 @@ export const AdministrationPage: React.FC = () => {
   };
 
   const handleAddDepartment = (data: any) => {
-    console.log('Добавление подразделения:', data);
-    setDepartments([...departments, { id: departments.length + 1, ...data }]);
-    setShowDepartmentModal(false);
+    (async () => {
+      try {
+        const res = await apiClient.post('/users/departments/create/', data);
+        const created = res.data;
+        setDepartments(prev => [...prev, created]);
+        setShowDepartmentModal(false);
+      } catch (err: any) {
+        console.error('Failed to create department', err);
+        alert('Ошибка при создании подразделения: ' + (err?.response?.data?.error || err?.message));
+      }
+    })();
   };
   
   const handleEditDepartment = (data: any) => {
@@ -274,9 +422,17 @@ export const AdministrationPage: React.FC = () => {
   };
   
   const handleDeleteDepartment = () => {
-    console.log('Удаление подразделения:', deletingDepartmentId);
-    setDepartments(departments.filter(d => d.id !== deletingDepartmentId));
-    setDeletingDepartmentId(null);
+    (async () => {
+      try {
+        if (deletingDepartmentId == null) return;
+        await apiClient.delete(`/users/departments/${deletingDepartmentId}/`);
+        setDepartments(prev => prev.filter(d => d.id !== deletingDepartmentId));
+        setDeletingDepartmentId(null);
+      } catch (err: any) {
+        console.error('Failed to delete department', err);
+        alert('Ошибка при удалении подразделения: ' + (err?.response?.data?.error || err?.message));
+      }
+    })();
   };
 
   const handleAddIncidentType = (data: any) => {
@@ -286,7 +442,7 @@ export const AdministrationPage: React.FC = () => {
   };
   
   const handleEditIncidentType = (data: any) => {
-    console.log('Редактирова��ие типа происшествия:', data);
+    console.log('Редактирование типа происшествия:', data);
     setIncidentTypes(incidentTypes.map(t => t.id === editingIncidentType.id ? { ...t, ...data } : t));
     setEditingIncidentType(null);
   };
@@ -303,6 +459,43 @@ export const AdministrationPage: React.FC = () => {
     setSettingsSaved(true);
     setTimeout(() => setSettingsSaved(false), 3000);
   };
+
+  useEffect(() => {
+    // Load departments from backend
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiClient.get('/users/departments/');
+        if (cancelled) return;
+        setDepartments(res.data || []);
+      } catch (err: any) {
+        console.error('Failed to load departments', err);
+        // keep existing mock data if desired or empty
+      }
+    })();
+    (async () => {
+      // Load users for manager select
+      try {
+        const res = await apiClient.get('/users/');
+        if (cancelled) return;
+        const usersData = res.data || [];
+        setUsers(usersData);
+      } catch (err: any) {
+        console.error('Failed to load users', err);
+      }
+    })();
+    (async () => {
+      // Load all groups (roles) for role dropdown
+      try {
+        const res = await apiClient.get('/users/all-groups/');
+        if (cancelled) return;
+        setGroups(res.data || []);
+      } catch (err: any) {
+        console.error('Failed to load groups', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
   
   return (
     <div className="space-y-6">
@@ -381,9 +574,9 @@ export const AdministrationPage: React.FC = () => {
                 {users.map((user) => (
                   <tr key={user.id} className="border-b border-[#E5E7EB] hover:bg-[#F9FAFB]">
                     <td className="py-3 px-4 text-[#1F2937]">{user.email}</td>
-                    <td className="py-3 px-4 text-[#1F2937]">{user.fullName}</td>
-                    <td className="py-3 px-4 text-[#1F2937]">{user.role}</td>
-                    <td className="py-3 px-4 text-[#1F2937]">{user.department}</td>
+                    <td className="py-3 px-4 text-[#1F2937]">{user.full_name || user.fullName || user.email}</td>
+                    <td className="py-3 px-4 text-[#1F2937]">{user.role || (user.groups && user.groups[0]?.name) || '-'}</td>
+                    <td className="py-3 px-4 text-[#1F2937]">{user.department_name || user.department || '-'}</td>
                     <td className="py-3 px-4">
                       <div className="flex gap-2">
                         <button
@@ -492,33 +685,42 @@ export const AdministrationPage: React.FC = () => {
               <thead>
                 <tr className="border-b border-[#E5E7EB]">
                   <th className="text-left py-3 px-4 text-[#6B7280] font-medium">Название</th>
+                  <th className="text-left py-3 px-4 text-[#6B7280] font-medium">Родитель</th>
+                  <th className="text-left py-3 px-4 text-[#6B7280] font-medium">Руководитель</th>
                   <th className="text-left py-3 px-4 text-[#6B7280] font-medium">Действия</th>
                 </tr>
               </thead>
               <tbody>
-                {departments.map((department) => (
-                  <tr key={department.id} className="border-b border-[#E5E7EB] hover:bg-[#F9FAFB]">
-                    <td className="py-3 px-4 text-[#1F2937]">{department.name}</td>
-                    <td className="py-3 px-4">
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => setEditingDepartment(department)}
-                          className="p-1.5 text-[#6B7280] hover:text-[#CF1217] hover:bg-[#FEE2E2] rounded transition-colors"
-                          title="Редактировать"
-                        >
-                          <Edit className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setDeletingDepartmentId(department.id)}
-                          className="p-1.5 text-[#6B7280] hover:text-[#EF4444] hover:bg-[#FEE2E2] rounded transition-colors"
-                          title="Удалить"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {departments.map((department) => {
+                  const parentName = departments.find(d => d.id === department.parent_department)?.name || '-';
+                  const managerUser = users.find(u => u.id === department.manager);
+                  const managerDisplay = department.manager_name || (managerUser ? (managerUser.full_name || managerUser.fullName || managerUser.email) : '-');
+                  return (
+                    <tr key={department.id} className="border-b border-[#E5E7EB] hover:bg-[#F9FAFB]">
+                      <td className="py-3 px-4 text-[#1F2937]">{department.name}</td>
+                      <td className="py-3 px-4 text-[#1F2937]">{parentName}</td>
+                      <td className="py-3 px-4 text-[#1F2937]">{managerDisplay}</td>
+                      <td className="py-3 px-4">
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setEditingDepartment(department)}
+                            className="p-1.5 text-[#6B7280] hover:text-[#CF1217] hover:bg-[#FEE2E2] rounded transition-colors"
+                            title="Редактировать"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setDeletingDepartmentId(department.id)}
+                            className="p-1.5 text-[#6B7280] hover:text-[#EF4444] hover:bg-[#FEE2E2] rounded transition-colors"
+                            title="Удалить"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -573,6 +775,7 @@ export const AdministrationPage: React.FC = () => {
         onClose={() => setShowUserModal(false)}
         onSubmit={handleAddUser}
         departments={departments}
+        groups={groups}
       />
       
       {/* Модальное окно редактирования */}
@@ -583,6 +786,7 @@ export const AdministrationPage: React.FC = () => {
           onSubmit={handleEditUser}
           initialData={editingUser}
           departments={departments}
+          groups={groups}
           isEdit
         />
       )}
@@ -592,6 +796,8 @@ export const AdministrationPage: React.FC = () => {
         isOpen={showDepartmentModal}
         onClose={() => setShowDepartmentModal(false)}
         onSubmit={handleAddDepartment}
+        departments={departments}
+        users={users}
       />
       
       {/* Модальное окно редактирования подразделения */}
@@ -602,6 +808,8 @@ export const AdministrationPage: React.FC = () => {
           onSubmit={handleEditDepartment}
           initialData={editingDepartment}
           isEdit
+          departments={departments}
+          users={users}
         />
       )}
 

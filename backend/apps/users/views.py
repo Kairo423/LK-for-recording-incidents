@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.db.models import Q
 from .serializers import (
     UserSerializer, UserCreateUpdateSerializer, GroupSerializer,
@@ -17,6 +18,8 @@ User = get_user_model()
 # Swagger/OpenAPI helpers
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
+from .serializers import DepartmentSerializer
+from .permissions import IsAdmin
 
 @swagger_auto_schema(method='post', request_body=UserCreateUpdateSerializer, responses={201: UserSerializer})
 @api_view(['POST'])
@@ -154,7 +157,8 @@ def users_list_view(request):
     return Response(serializer.data)
 
 @swagger_auto_schema(method='get', responses={200: UserSerializer})
-@api_view(['GET'])
+@swagger_auto_schema(method='patch', request_body=UserCreateUpdateSerializer, responses={200: UserSerializer})
+@api_view(['GET', 'PATCH'])
 @permission_classes([IsAuthenticated])
 def user_detail_view(request, pk):
     """Получение информации о конкретном пользователе"""
@@ -169,9 +173,23 @@ def user_detail_view(request, pk):
             elif request.user.id != user.id:
                 return Response({'error': 'Нет доступа'}, status=status.HTTP_403_FORBIDDEN)
         
+        # Если PATCH — пытаемся обновить (только админ может редактировать других пользователей)
+        if request.method == 'PATCH':
+            # Разрешаем обновлять только админом или самим пользователем
+            is_admin = request.user.groups.filter(name='Администратор').exists()
+            if not (is_admin or request.user.id == user.id):
+                return Response({'error': 'Нет доступа'}, status=status.HTTP_403_FORBIDDEN)
+
+            serializer = UserCreateUpdateSerializer(user, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                return Response({'user': UserSerializer(user).data})
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # GET — вернуть информацию
         serializer = UserSerializer(user)
         groups = [{'id': g.id, 'name': g.name} for g in user.groups.all()]
-        
+
         return Response({
             'user': serializer.data,
             'groups': groups
@@ -225,6 +243,17 @@ def whoami(request):
     })
 
 
+@swagger_auto_schema(method='get', responses={200: GroupSerializer(many=True)})
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def all_groups_view(request):
+    """Возвращает полный список групп (ролей) — используется фронтендом для выпадающего списка ролей."""
+    from django.contrib.auth.models import Group as AuthGroup
+    groups = AuthGroup.objects.all().order_by('name')
+    serializer = GroupSerializer(groups, many=True)
+    return Response(serializer.data)
+
+
 # --- New endpoint: update contact fields (email, phone) for current user ---
 contact_request_body = openapi.Schema(
     type=openapi.TYPE_OBJECT,
@@ -269,3 +298,60 @@ def update_contact_view(request):
         return Response({'message': 'Нет изменений'}, status=status.HTTP_200_OK)
 
     return Response({'user': UserSerializer(user).data, 'message': 'Контакты обновлены'})
+
+
+
+
+
+# --- Departments API: list, create, delete ---
+department_list_schema = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    properties={
+        'id': openapi.Schema(type=openapi.TYPE_INTEGER),
+        'name': openapi.Schema(type=openapi.TYPE_STRING),
+        'parent_department': openapi.Schema(type=openapi.TYPE_INTEGER, nullable=True),
+        'manager': openapi.Schema(type=openapi.TYPE_INTEGER, nullable=True),
+        'manager_name': openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+        'children_count': openapi.Schema(type=openapi.TYPE_INTEGER)
+    }
+)
+
+
+@swagger_auto_schema(method='get', responses={200: UserSerializer})
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def departments_list_view(request):
+    """Возвращает список подразделений"""
+    from .serializers import DepartmentSerializer
+    from .models import Department
+
+    qs = Department.objects.all().order_by('name')
+    serializer = DepartmentSerializer(qs, many=True)
+    return Response(serializer.data)
+
+
+@swagger_auto_schema(method='post', request_body=openapi.Schema(type=openapi.TYPE_OBJECT, properties={'name': openapi.Schema(type=openapi.TYPE_STRING), 'parent_department': openapi.Schema(type=openapi.TYPE_INTEGER), 'manager': openapi.Schema(type=openapi.TYPE_INTEGER)}), responses={201: department_list_schema})
+@api_view(['POST'])
+@permission_classes([IsAdmin])
+def department_create_view(request):
+    """Создание подразделения (только для админов)."""
+    from .serializers import DepartmentSerializer
+    serializer = DepartmentSerializer(data=request.data)
+    if serializer.is_valid():
+        dept = serializer.save()
+        return Response(DepartmentSerializer(dept).data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@swagger_auto_schema(method='delete', responses={204: 'No Content'})
+@api_view(['DELETE'])
+@permission_classes([IsAdmin])
+def department_delete_view(request, pk):
+    """Удаление подразделения (только для админов)."""
+    from .models import Department
+    try:
+        dept = Department.objects.get(pk=pk)
+        dept.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    except Department.DoesNotExist:
+        return Response({'error': 'Подразделение не найдено'}, status=status.HTTP_404_NOT_FOUND)
