@@ -51,6 +51,9 @@ class IncidentViewSet(viewsets.ModelViewSet):
             permission_classes = [IsAuthenticated, CanDeleteIncident]
         elif self.action in ['export', 'analytics']:
             permission_classes = [IsAuthenticated, CanExportReports]
+        elif self.action in ['statistics']:
+            # Statistics endpoint should be available to any authenticated user
+            permission_classes = [IsAuthenticated]
         else:
             permission_classes = [IsAuthenticated, CanViewIncident]
         return [permission() for permission in permission_classes]

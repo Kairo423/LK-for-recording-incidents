@@ -28,6 +28,7 @@ const incidentTypes = [
 export const IncidentsListPage: React.FC<IncidentsListProps> = ({ onNavigate }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const itemsPerPage = 10;
@@ -37,6 +38,17 @@ export const IncidentsListPage: React.FC<IncidentsListProps> = ({ onNavigate }) 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Options loaded from backend
+  const [typesOptions, setTypesOptions] = useState<{ value: string; label: string }[]>([
+    { value: 'all', label: 'Все типы' }
+  ]);
+  const [statusesOptions, setStatusesOptions] = useState<{ value: string; label: string }[]>([
+    { value: 'all', label: 'Все статусы' }
+  ]);
+
+  const [departmentOptions, setDepartmentOptions] = useState<{ value: string; label: string }[]>([
+    { value: 'all', label: 'Все подразделения' }
+  ]);
   const totalPages = Math.ceil(totalCount / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
 
@@ -49,7 +61,8 @@ export const IncidentsListPage: React.FC<IncidentsListProps> = ({ onNavigate }) 
       try {
         const params: any = { page: currentPage };
         if (searchQuery && searchQuery.trim()) params.search = searchQuery.trim();
-        if (typeFilter && typeFilter !== 'all') params.incident_type_name = typeFilter;
+        if (typeFilter && typeFilter !== 'all') params.incident_type = Number(typeFilter);
+        if (statusFilter && statusFilter !== 'all') params.status = Number(statusFilter);
 
         const res = await apiClient.get('/incidents/', { params });
         if (!mounted) return;
@@ -67,18 +80,87 @@ export const IncidentsListPage: React.FC<IncidentsListProps> = ({ onNavigate }) 
 
     fetchIncidents();
     return () => { mounted = false; };
-  }, [searchQuery, typeFilter, currentPage]);
+  }, [searchQuery, typeFilter, statusFilter, currentPage]);
+
+  // Load type and status options from backend
+  useEffect(() => {
+    let mounted = true;
+    const loadOptions = async () => {
+      try {
+        const [tRes, sRes, dRes] = await Promise.all([
+          apiClient.get('/incidents/types/'),
+          apiClient.get('/incidents/statuses/'),
+          apiClient.get('/users/departments/')
+        ]);
+
+        if (!mounted) return;
+
+        const types = Array.isArray(tRes.data) ? tRes.data : (tRes.data.results || []);
+        const statuses = Array.isArray(sRes.data) ? sRes.data : (sRes.data.results || []);
+        const departments = Array.isArray(dRes.data) ? dRes.data : (dRes.data.results || []);
+
+        // Only include active types
+        const typeOptions = [{ value: 'all', label: 'Все типы' }].concat(
+          types
+            .filter((t: any) => t.is_active !== false)
+            .map((t: any) => ({ value: String(t.id), label: t.name }))
+        );
+
+        const statusOptions = [{ value: 'all', label: 'Все статусы' }].concat(
+          statuses.map((s: any) => ({ value: String(s.id), label: s.name }))
+        );
+
+        const deptOptions = [{ value: 'all', label: 'Все подразделения' }].concat(
+          departments.map((d: any) => ({ value: String(d.id), label: d.name }))
+        );
+
+        setTypesOptions(typeOptions);
+        setStatusesOptions(statusOptions);
+        setDepartmentOptions(deptOptions);
+      } catch (err) {
+        console.error('Failed to load type/status options', err);
+      }
+    };
+
+    loadOptions();
+    return () => { mounted = false; };
+  }, []);
   
   const handleReset = () => {
     setSearchQuery('');
     setTypeFilter('all');
+    setStatusFilter('all');
     setCurrentPage(1);
   };
   
-  const handleCreateIncident = (data: any) => {
-    console.log('Создание происшествия:', data);
-    setShowCreateModal(false);
-    // Здесь будет логика создания
+  const handleCreateIncident = async (data: any) => {
+    try {
+      // Log payload for debugging
+      console.debug('Creating incident payload:', data);
+
+      // If status is missing/null, try to use first available status id as a safe fallback
+      if (data.status === null || data.status === undefined) {
+        const firstStatus = statusesOptions.find(o => o.value !== 'all');
+        if (firstStatus) {
+          data.status = Number(firstStatus.value);
+        }
+      }
+
+      const res = await apiClient.post('/incidents/', data);
+      // created successfully
+      setShowCreateModal(false);
+      // refresh list to include new incident
+      setCurrentPage(1);
+      return res.data;
+    } catch (err: any) {
+      console.error('Failed to create incident', err, err?.response?.data);
+      if (err?.response?.status === 400 && err.response.data) {
+        // Return validation errors to caller (IncidentForm will catch and display)
+        return Promise.reject(err.response.data);
+      }
+      alert(err?.response?.data?.detail || err?.message || 'Ошибка при создании происшествия');
+      return Promise.reject({ non_field_errors: ['Ошибка при создании'] });
+    }
   };
   
   return (
@@ -99,7 +181,7 @@ export const IncidentsListPage: React.FC<IncidentsListProps> = ({ onNavigate }) 
       
       {/* Фильтры */}
       <Card>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="md:col-span-2">
             <Input
               placeholder="Поиск по описанию или номеру..."
@@ -108,11 +190,22 @@ export const IncidentsListPage: React.FC<IncidentsListProps> = ({ onNavigate }) 
               icon={<Search className="w-5 h-5" />}
             />
           </div>
-          <Select
-            options={incidentTypes}
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-          />
+          <div>
+            <Select
+              options={typesOptions}
+              value={typeFilter}
+              onChange={(e) => { setTypeFilter(e.target.value); setCurrentPage(1); }}
+              aria-label="Тип происшествия"
+            />
+          </div>
+          <div>
+            <Select
+              options={statusesOptions}
+              value={statusFilter}
+              onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1); }}
+              aria-label="Статус"
+            />
+          </div>
         </div>
         <div className="flex gap-3 mt-4">
           <Button 
@@ -247,8 +340,11 @@ export const IncidentsListPage: React.FC<IncidentsListProps> = ({ onNavigate }) 
         size="lg"
       >
         <IncidentForm
-          onSubmit={handleCreateIncident}
-          onCancel={() => setShowCreateModal(false)}
+            onSubmit={handleCreateIncident}
+            onCancel={() => setShowCreateModal(false)}
+            typeOptions={typesOptions.filter(o => o.value !== 'all').map(o => ({ value: o.value, label: o.label }))}
+            statusOptions={statusesOptions.filter(o => o.value !== 'all').map(o => ({ value: o.value, label: o.label }))}
+            departmentOptions={departmentOptions.filter(o => o.value !== 'all').map(o => ({ value: o.value, label: o.label }))}
         />
       </Modal>
     </div>

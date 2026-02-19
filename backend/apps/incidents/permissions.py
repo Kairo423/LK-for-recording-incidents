@@ -3,6 +3,14 @@ from rest_framework import permissions
 class CanViewIncident(permissions.BasePermission):
     """Проверка прав на просмотр происшествия"""
     
+    def has_permission(self, request, view):
+        """Глобальная проверка: позволяем доступ к спискам/статистике авторизованным пользователям."""
+        # Allow authenticated users to access list-like endpoints (statistics/list)
+        if getattr(view, 'action', None) in ('list', 'statistics'):
+            return request.user and request.user.is_authenticated
+        # For other actions, defer to object-level checks
+        return True
+
     def has_object_permission(self, request, view, obj):
         return obj.can_user_view(request.user)
 
