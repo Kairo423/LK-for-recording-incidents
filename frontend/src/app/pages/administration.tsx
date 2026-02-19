@@ -7,10 +7,10 @@ import { ConfirmDialog } from '../components/confirm-dialog';
 import { AppUser, Department} from '../types/index';
 import apiClient from '../../api/client';
 
-// Моковые данные
+// Моковые данные (фоллбек, используем только если API недоступен)
 const mockIncidentTypes = [
-  { id: 1, name: 'Авария', color: '#EF4444' },
-  { id: 2, name: 'Несчастный случай', color: '#F59E0B' }
+  { id: 1, name: 'Авария', color: '#EF4444', severity_level: 5 },
+  { id: 2, name: 'Несчастный случай', color: '#F59E0B', severity_level: 3 }
 ];
 
 const roles = [
@@ -30,7 +30,10 @@ export const AdministrationPage: React.FC = () => {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [groups, setGroups] = useState<{ id: number; name: string }[]>([]);
-  const [incidentTypes, setIncidentTypes] = useState(mockIncidentTypes);
+  // Инициализируем пустым массивом — данные подгрузятся с API в useEffect.
+  // Ранее мы использовали mock как начальное значение, из-за чего таблица
+  // показывала заглушку до получения ответа от сервера.
+  const [incidentTypes, setIncidentTypes] = useState<any[]>([]);
   const [showUserModal, setShowUserModal] = useState(false);
   const [showDepartmentModal, setShowDepartmentModal] = useState(false);
   const [showIncidentTypeModal, setShowIncidentTypeModal] = useState(false);
@@ -159,21 +162,75 @@ export const AdministrationPage: React.FC = () => {
   };
 
   const handleAddIncidentType = (data: any) => {
-    console.log('Добавление типа происшествия:', data);
-    setIncidentTypes([...incidentTypes, { id: incidentTypes.length + 1, ...data }]);
-    setShowIncidentTypeModal(false);
+    (async () => {
+      try {
+        const res = await apiClient.post('/incidents/types/', data);
+        const created = res.data;
+        setIncidentTypes(prev => [...prev, created]);
+        setShowIncidentTypeModal(false);
+      } catch (err: any) {
+        console.error('Failed to create incident type', err);
+        const resp = err?.response?.data;
+        let msg = err?.message || 'Ошибка при создании типа происшествия';
+        if (resp && typeof resp === 'object') {
+          // collect field errors or detail
+          if (resp.detail) msg = String(resp.detail);
+          else {
+            const parts: string[] = [];
+            for (const k of Object.keys(resp)) {
+              const v = resp[k];
+              if (Array.isArray(v)) parts.push(`${k}: ${v.join(', ')}`);
+              else parts.push(`${k}: ${String(v)}`);
+            }
+            if (parts.length) msg = parts.join('; ');
+          }
+        }
+        alert(msg);
+      }
+    })();
   };
   
   const handleEditIncidentType = (data: any) => {
-    console.log('Редактирование типа происшествия:', data);
-    setIncidentTypes(incidentTypes.map(t => t.id === editingIncidentType.id ? { ...t, ...data } : t));
-    setEditingIncidentType(null);
+    (async () => {
+      try {
+        if (!editingIncidentType) return;
+        const res = await apiClient.patch(`/incidents/types/${editingIncidentType.id}/`, data);
+        const updated = res.data;
+        setIncidentTypes(prev => prev.map(t => t.id === editingIncidentType.id ? updated : t));
+        setEditingIncidentType(null);
+      } catch (err: any) {
+        console.error('Failed to update incident type', err);
+        const resp = err?.response?.data;
+        let msg = err?.message || 'Ошибка при обновлении типа происшествия';
+        if (resp && typeof resp === 'object') {
+          if (resp.detail) msg = String(resp.detail);
+          else {
+            const parts: string[] = [];
+            for (const k of Object.keys(resp)) {
+              const v = resp[k];
+              if (Array.isArray(v)) parts.push(`${k}: ${v.join(', ')}`);
+              else parts.push(`${k}: ${String(v)}`);
+            }
+            if (parts.length) msg = parts.join('; ');
+          }
+        }
+        alert(msg);
+      }
+    })();
   };
   
   const handleDeleteIncidentType = () => {
-    console.log('Удаление типа происшествия:', deletingIncidentTypeId);
-    setIncidentTypes(incidentTypes.filter(t => t.id !== deletingIncidentTypeId));
-    setDeletingIncidentTypeId(null);
+    (async () => {
+      try {
+        if (deletingIncidentTypeId == null) return;
+        await apiClient.delete(`/incidents/types/${deletingIncidentTypeId}/`);
+        setIncidentTypes(prev => prev.filter(t => t.id !== deletingIncidentTypeId));
+        setDeletingIncidentTypeId(null);
+      } catch (err: any) {
+        console.error('Failed to delete incident type', err);
+        alert('Ошибка при удалении типа происшествия: ' + (err?.response?.data?.detail || err?.message));
+      }
+    })();
   };
   
   const handleSaveSettings = (e: React.FormEvent) => {
@@ -215,6 +272,18 @@ export const AdministrationPage: React.FC = () => {
         setGroups(res.data || []);
       } catch (err: any) {
         console.error('Failed to load groups', err);
+      }
+    })();
+    (async () => {
+      // Load incident types from backend
+      try {
+        const res = await apiClient.get('/incidents/types/');
+        if (cancelled) return;
+        setIncidentTypes(res.data || []);
+      } catch (err: any) {
+        console.error('Failed to load incident types', err);
+        // fallback to mock data so UI remains usable in dev if API is unavailable
+        setIncidentTypes(mockIncidentTypes);
       }
     })();
     return () => { cancelled = true; };
@@ -305,6 +374,7 @@ export const AdministrationPage: React.FC = () => {
               <thead>
                 <tr className="border-b border-[#E5E7EB]">
                   <th className="text-left py-3 px-4 text-[#6B7280] font-medium">Название</th>
+                  <th className="text-left py-3 px-4 text-[#6B7280] font-medium">Уровень серьёзности</th>
                   <th className="text-left py-3 px-4 text-[#6B7280] font-medium">Цвет</th>
                   <th className="text-left py-3 px-4 text-[#6B7280] font-medium">Действия</th>
                 </tr>
@@ -313,6 +383,7 @@ export const AdministrationPage: React.FC = () => {
                 {incidentTypes.map((type) => (
                   <tr key={type.id} className="border-b border-[#E5E7EB] hover:bg-[#F9FAFB]">
                     <td className="py-3 px-4 text-[#1F2937]">{type.name}</td>
+                    <td className="py-3 px-4 text-[#1F2937]">{type.severity_level ?? '-'}</td>
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
                         <div 

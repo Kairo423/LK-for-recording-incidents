@@ -72,12 +72,18 @@ class IncidentViewSet(viewsets.ModelViewSet):
         if user.groups.filter(name='Администратор').exists():
             return queryset
         
-        # Руководитель видит происшествия своего подразделения
-        if user.groups.filter(name='Руководитель').exists():
-            return queryset.filter(department=user.profile.department)
-        
-        # Сотрудник видит только свои происшествия
-        return queryset.filter(author=user)
+        # Для всех остальных ролей (Руководитель и Сотрудник) показываем
+        # происшествия, относящиеся к подразделению пользователя.
+        # Если профиль или подразделение не указаны — возвращаем пустой набор.
+        try:
+            dept = user.profile.department
+        except Exception:
+            dept = None
+
+        if dept is None:
+            return queryset.none()
+
+        return queryset.filter(department=dept)
     
     @action(detail=True, methods=['post'])
     def add_comment(self, request, pk=None):
@@ -271,12 +277,40 @@ class IncidentViewSet(viewsets.ModelViewSet):
         return response
 
 
-class IncidentTypeViewSet(viewsets.ReadOnlyModelViewSet):
-    """ViewSet для типов происшествий"""
-    queryset = IncidentType.objects.filter(is_active=True)
+class IncidentTypeViewSet(viewsets.ModelViewSet):
+    """ViewSet для типов происшествий. Администраторы могут создавать/редактировать/удалять."""
+    queryset = IncidentType.objects.all()
     serializer_class = IncidentTypeSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = None
+
+    def _is_admin(self):
+        user = self.request.user
+        return user and user.is_authenticated and user.groups.filter(name='Администратор').exists()
+
+    def create(self, request, *args, **kwargs):
+        if not self._is_admin():
+            return Response({'detail': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        if not self._is_admin():
+            return Response({'detail': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        if not self._is_admin():
+            return Response({'detail': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        if not self._is_admin():
+            return Response({'detail': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+        # Soft-delete: mark is_active False instead of deleting
+        instance = self.get_object()
+        instance.is_active = False
+        instance.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class IncidentStatusViewSet(viewsets.ReadOnlyModelViewSet):

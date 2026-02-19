@@ -92,8 +92,8 @@ class IncidentAdmin(admin.ModelAdmin):
             from django.utils import timezone
             from datetime import timedelta
             if timezone.now() - obj.created_at > timedelta(days=7):
-                return format_html('<span style="color: red;">Просрочено</span>')
-        return format_html('<span style="color: green;">Нет</span>')
+                return format_html('<span style="color: red;">{}</span>', 'Просрочено')
+        return format_html('<span style="color: green;">{}</span>', 'Нет')
     is_overdue.short_description = 'Просрочено'
 
 

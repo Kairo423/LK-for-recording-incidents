@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Plus, Search, Filter, ChevronLeft, ChevronRight, FileX } from 'lucide-react';
 import { Card } from '../components/card';
 import { Badge } from '../components/badge';
@@ -8,7 +8,8 @@ import { Select } from '../components/select';
 import { Modal } from '../components/modal';
 import { IncidentForm } from '../components/incident-form';
 import { EmptyState } from '../components/empty-state';
-import { mockIncidents, getStatusVariant, getTypeVariant } from '../utils/mock-data';
+import { getStatusVariant, getTypeVariant } from '../utils/mock-data';
+import apiClient from '../../api/client';
 import { PageType, UserRole } from '../types/index.ts';
 
 interface IncidentsListProps {
@@ -30,19 +31,43 @@ export const IncidentsListPage: React.FC<IncidentsListProps> = ({ onNavigate }) 
   const [currentPage, setCurrentPage] = useState(1);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const itemsPerPage = 10;
-  
-  // Фильтрация
-  const filteredIncidents = mockIncidents.filter(incident => {
-    const matchesSearch = incident.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         incident.number.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesType = typeFilter === 'all' || incident.type === typeFilter;
-    return matchesSearch && matchesType;
-  });
-  
-  // Пагинация
-  const totalPages = Math.ceil(filteredIncidents.length / itemsPerPage);
+
+  const [incidents, setIncidents] = useState<any[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const totalPages = Math.ceil(totalCount / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
-  const paginatedIncidents = filteredIncidents.slice(startIndex, startIndex + itemsPerPage);
+
+  // Load incidents from API when filters/page/search change
+  useEffect(() => {
+    let mounted = true;
+    const fetchIncidents = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const params: any = { page: currentPage };
+        if (searchQuery && searchQuery.trim()) params.search = searchQuery.trim();
+        if (typeFilter && typeFilter !== 'all') params.incident_type_name = typeFilter;
+
+        const res = await apiClient.get('/incidents/', { params });
+        if (!mounted) return;
+        const data = res.data || {};
+        // DRF paginated response: {count, next, previous, results}
+        setIncidents(data.results || []);
+        setTotalCount(data.count || (data.results ? data.results.length : 0));
+      } catch (err: any) {
+        console.error('Failed to load incidents', err);
+        if (mounted) setError(err?.response?.data?.detail || err?.message || 'Ошибка при загрузке');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    fetchIncidents();
+    return () => { mounted = false; };
+  }, [searchQuery, typeFilter, currentPage]);
   
   const handleReset = () => {
     setSearchQuery('');
@@ -102,7 +127,16 @@ export const IncidentsListPage: React.FC<IncidentsListProps> = ({ onNavigate }) 
       
       {/* Таблица */}
       <Card>
-        {paginatedIncidents.length === 0 ? (
+        {loading ? (
+          <div className="p-6 text-center text-[#6B7280]">Загрузка...</div>
+        ) : error ? (
+          <EmptyState
+            icon={<FileX className="w-12 h-12" />}
+            title="Ошибка"
+            description={String(error)}
+            action={<Button variant="secondary" size="sm" onClick={() => { setCurrentPage(1); setSearchQuery(''); setTypeFilter('all'); }}>Сбросить</Button>}
+          />
+        ) : incidents.length === 0 ? (
           <EmptyState
             icon={<FileX className="w-12 h-12" />}
             title="Происшествия не найдены"
@@ -128,7 +162,7 @@ export const IncidentsListPage: React.FC<IncidentsListProps> = ({ onNavigate }) 
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedIncidents.map((incident, index) => (
+                  {incidents.map((incident, index) => (
                     <tr 
                       key={incident.id}
                       onClick={() => onNavigate('incident-detail', incident.id)}
@@ -136,17 +170,17 @@ export const IncidentsListPage: React.FC<IncidentsListProps> = ({ onNavigate }) 
                         index % 2 === 0 ? 'bg-white' : 'bg-[#F9FAFB]'
                       }`}
                     >
-                      <td className="py-3 px-4 text-[#1F2937] font-medium">{incident.number}</td>
+                      <td className="py-3 px-4 text-[#1F2937] font-medium">{incident.incident_number}</td>
                       <td className="py-3 px-4">
-                        <Badge variant={getTypeVariant(incident.type)}>
-                          {incident.type}
+                        <Badge variant={getTypeVariant(incident.incident_type_name)}>
+                          {incident.incident_type_name}
                         </Badge>
                       </td>
-                      <td className="py-3 px-4 text-[#1F2937]">{incident.department}</td>
-                      <td className="py-3 px-4 text-[#6B7280]">{incident.date}</td>
+                      <td className="py-3 px-4 text-[#1F2937]">{incident.department_name}</td>
+                      <td className="py-3 px-4 text-[#6B7280]">{incident.incident_date}</td>
                       <td className="py-3 px-4">
-                        <Badge variant={getStatusVariant(incident.status)}>
-                          {incident.status}
+                        <Badge variant={getStatusVariant(incident.status_name)}>
+                          {incident.status_name}
                         </Badge>
                       </td>
                       <td className="py-3 px-4 text-[#6B7280] max-w-xs truncate">
@@ -162,7 +196,7 @@ export const IncidentsListPage: React.FC<IncidentsListProps> = ({ onNavigate }) 
             {totalPages > 1 && (
               <div className="flex items-center justify-between mt-6 pt-6 border-t border-[#E5E7EB]">
                 <p className="text-[#6B7280]">
-                  Показано {startIndex + 1}-{Math.min(startIndex + itemsPerPage, filteredIncidents.length)} из {filteredIncidents.length}
+                  Показано {startIndex + 1}-{Math.min(startIndex + itemsPerPage, totalCount)} из {totalCount}
                 </p>
                 <div className="flex gap-2">
                   <Button

@@ -1,6 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
-from django.core.validators import MinValueValidator, MaxValueValidator
+from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator
 import uuid
 
 
@@ -11,6 +11,13 @@ class IncidentType(models.Model):
         default=1,
         validators=[MinValueValidator(1), MaxValueValidator(5)],
         verbose_name="Уровень серьезности"
+    )
+    # Цвет в формате шестнадцатеричной строки, например: #EF4444
+    color = models.CharField(
+        max_length=7,
+        default='#3B82F6',
+        validators=[RegexValidator(regex=r'^#[0-9A-Fa-f]{6}$', message='Введите цвет в формате #RRGGBB')],
+        verbose_name='Цвет отображения'
     )
     is_active = models.BooleanField(default=True, verbose_name="Активен")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")

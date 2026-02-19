@@ -10,7 +10,7 @@ from apps.users.serializers import UserSerializer, DepartmentSerializer
 class IncidentTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = IncidentType
-        fields = ['id', 'name', 'severity_level', 'is_active']
+        fields = ['id', 'name', 'severity_level', 'color', 'is_active']
 
 
 class IncidentStatusSerializer(serializers.ModelSerializer):
