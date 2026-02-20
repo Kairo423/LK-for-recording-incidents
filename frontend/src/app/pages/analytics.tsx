@@ -1,83 +1,531 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Card } from '../components/card';
 import { Button } from '../components/button';
 import { Input } from '../components/input';
 import { Select } from '../components/select';
 import { Download, TrendingUp } from 'lucide-react';
+import apiClient from '../../api/client';
+import { UserRole } from '../types';
 import { 
   PieChart, Pie, Cell, 
   BarChart, Bar, 
-  LineChart, Line,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer 
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
 } from 'recharts';
 
-// Данные для диаграмм
-const typeDistributionData = [
-  { name: 'Авария', value: 6, color: '#CF1217' },
-  { name: 'Технические', value: 4, color: '#F59E0B' },
-  { name: 'Несчастные случаи', value: 3, color: '#EF4444' },
-  { name: 'ДТП', value: 2, color: '#3B82F6' }
-];
+const TYPE_COLORS = ['#CF1217', '#F59E0B', '#EF4444', '#3B82F6', '#10B981', '#8B5CF6', '#6366F1', '#F472B6'];
+const MONTH_LABELS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
 
-const monthlyDynamicsData = [
-  { month: 'Янв', count: 3 },
-  { month: 'Фев', count: 5 },
-  { month: 'Мар', count: 4 },
-  { month: 'Апр', count: 6 },
-  { month: 'Май', count: 4 },
-  { month: 'Июн', count: 7 }
-];
+const formatDateToInput = (date: Date) => date.toISOString().slice(0, 10);
 
-const departmentData = [
-  { department: 'Производство', count: 8 },
-  { department: 'Склад', count: 3 },
-  { department: 'Логистика', count: 2 },
-  { department: 'ИТ', count: 1 },
-  { department: 'Энергетика', count: 1 }
-];
+const formatDateForDisplay = (value?: string) => {
+  if (!value) {
+    return 'Все даты';
+  }
+  try {
+    return new Date(value).toLocaleDateString('ru-RU');
+  } catch (error) {
+    return value;
+  }
+};
 
-const statusData = [
-  { status: 'В работе', count: 6 },
-  { status: 'Завершено', count: 9 }
-];
+const getFileNameFromDisposition = (header?: string | null) => {
+  if (header) {
+    const match = /filename="?([^";]+)"?/i.exec(header);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  return `incidents_report_${new Date().toISOString().slice(0, 10)}.xlsx`;
+};
 
-const departments = [
-  { value: 'all', label: 'Все подразделения' },
-  { value: 'production', label: 'Производство' },
-  { value: 'warehouse', label: 'Склад' },
-  { value: 'logistics', label: 'Логистика' }
-];
+interface StatusStat {
+  status__name: string;
+  status__is_closed: boolean;
+  count: number;
+}
 
-const types = [
-  { value: 'all', label: 'Все типы' },
-  { value: 'accident', label: 'Авария' },
-  { value: 'injury', label: 'Несчастный случай' },
-  { value: 'technical', label: 'Технический инцидент' }
-];
+interface TypeStat {
+  incident_type__name: string;
+  incident_type__color?: string;
+  count: number;
+}
 
-const statuses = [
-  { value: 'all', label: 'Все статусы' },
-  { value: 'in-progress', label: 'В работе' },
-  { value: 'completed', label: 'Завершено' }
-];
+interface DepartmentStat {
+  department__name: string;
+  count: number;
+}
 
-export const AnalyticsPage: React.FC = () => {
+interface MonthStat {
+  month: string;
+  count: number;
+  closed_count?: number;
+}
+
+interface StatisticsResponse {
+  total?: number;
+  by_status?: StatusStat[];
+  by_type?: TypeStat[];
+}
+
+interface AnalyticsResponse {
+  by_department?: DepartmentStat[];
+  by_month?: MonthStat[];
+}
+
+interface ReportParamsSnapshot {
+  dateFrom?: string;
+  dateTo?: string;
+  department: string;
+  type: string;
+  status: string;
+}
+
+interface ReportSummary {
+  dateFrom?: string;
+  dateTo?: string;
+  departmentLabel: string;
+  typeLabel: string;
+  statusLabel: string;
+}
+
+interface AnalyticsPageProps {
+  userRole: UserRole;
+}
+
+export const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ userRole }) => {
   const [activeTab, setActiveTab] = useState<'statistics' | 'reports'>('statistics');
   const [reportParams, setReportParams] = useState({
     period: '',
+    dateFrom: '',
+    dateTo: '',
     department: 'all',
     type: 'all',
     status: 'all'
   });
   const [reportGenerated, setReportGenerated] = useState(false);
-  
-  const handleGenerateReport = () => {
-    console.log('Генерация отчета:', reportParams);
-    setReportGenerated(true);
+  const [statisticsData, setStatisticsData] = useState<StatisticsResponse | null>(null);
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsResponse | null>(null);
+  const [isLoadingStatistics, setIsLoadingStatistics] = useState(true);
+  const [statisticsError, setStatisticsError] = useState<string | null>(null);
+  const [departmentOptions, setDepartmentOptions] = useState<{ value: string; label: string }[]>([
+    { value: 'all', label: 'Все подразделения' }
+  ]);
+  const [typeOptions, setTypeOptions] = useState<{ value: string; label: string }[]>([
+    { value: 'all', label: 'Все типы' }
+  ]);
+  const [statusOptions, setStatusOptions] = useState<{ value: string; label: string }[]>([
+    { value: 'all', label: 'Все статусы' }
+  ]);
+  const [filtersLoading, setFiltersLoading] = useState(true);
+  const [filtersError, setFiltersError] = useState<string | null>(null);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [lastReportFilters, setLastReportFilters] = useState<Record<string, string>>({});
+  const [lastReportSummary, setLastReportSummary] = useState<ReportSummary | null>(null);
+  const [userDepartment, setUserDepartment] = useState<{ id: string; label: string } | null>(null);
+  const [isProfileLoading, setIsProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchAnalyticsData = async () => {
+      try {
+        setIsLoadingStatistics(true);
+        setStatisticsError(null);
+
+        const [statisticsResponse, analyticsResponse] = await Promise.all([
+          apiClient.get('/incidents/statistics/'),
+          apiClient.get('/incidents/analytics/')
+        ]);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setStatisticsData(statisticsResponse.data || null);
+        setAnalyticsData(analyticsResponse.data || null);
+      } catch (error) {
+        console.error('Failed to load analytics data', error);
+        if (isMounted) {
+          setStatisticsError('Не удалось загрузить статистику. Попробуйте обновить страницу.');
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingStatistics(false);
+        }
+      }
+    };
+
+    fetchAnalyticsData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (userRole !== 'manager') {
+      setUserDepartment(null);
+      setProfileError(null);
+      return undefined;
+    }
+
+    let isMounted = true;
+
+    const fetchProfile = async () => {
+      try {
+        setIsProfileLoading(true);
+        setProfileError(null);
+        const res = await apiClient.get('/users/profile/');
+        if (!isMounted) {
+          return;
+        }
+        const data = res.data || {};
+        const userData = data.user || data;
+        const profile = userData.profile || data.profile || {};
+
+        let departmentId: string | null = null;
+        const profileDepartment =
+          profile.department !== undefined && profile.department !== null
+            ? profile.department
+            : profile.department_id;
+
+        if (profileDepartment !== undefined && profileDepartment !== null) {
+          departmentId = String(profileDepartment);
+        }
+
+        const departmentLabel =
+          userData.department_name ||
+          profile.department_name ||
+          data.department_name ||
+          'Моё подразделение';
+
+        if (departmentId) {
+          setUserDepartment({ id: departmentId, label: departmentLabel });
+          setReportParams((prev) => ({ ...prev, department: departmentId }));
+        } else {
+          setProfileError('Не удалось определить подразделение текущего пользователя.');
+        }
+      } catch (error) {
+        console.error('Failed to load user profile', error);
+        if (isMounted) {
+          setProfileError('Не удалось загрузить профиль пользователя.');
+        }
+      } finally {
+        if (isMounted) {
+          setIsProfileLoading(false);
+        }
+      }
+    };
+
+    fetchProfile();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [userRole]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadFilterOptions = async () => {
+      try {
+        setFiltersLoading(true);
+        setFiltersError(null);
+
+        const [departmentsResponse, typesResponse, statusesResponse] = await Promise.all([
+          apiClient.get('/users/departments/'),
+          apiClient.get('/incidents/types/'),
+          apiClient.get('/incidents/statuses/')
+        ]);
+
+        if (!isMounted) {
+          return;
+        }
+
+        const departmentsData = Array.isArray(departmentsResponse.data)
+          ? departmentsResponse.data
+          : departmentsResponse.data?.results || [];
+        const typesData = Array.isArray(typesResponse.data)
+          ? typesResponse.data
+          : typesResponse.data?.results || [];
+        const statusesData = Array.isArray(statusesResponse.data)
+          ? statusesResponse.data
+          : statusesResponse.data?.results || [];
+
+        setDepartmentOptions([
+          { value: 'all', label: 'Все подразделения' },
+          ...departmentsData.map((dept: any) => ({ value: String(dept.id), label: dept.name }))
+        ]);
+
+        setTypeOptions([
+          { value: 'all', label: 'Все типы' },
+          ...typesData
+            .filter((type: any) => type.is_active !== false)
+            .map((type: any) => ({ value: String(type.id), label: type.name }))
+        ]);
+
+        setStatusOptions([
+          { value: 'all', label: 'Все статусы' },
+          ...statusesData.map((status: any) => ({ value: String(status.id), label: status.name }))
+        ]);
+      } catch (error) {
+        console.error('Failed to load report filters', error);
+        if (isMounted) {
+          setFiltersError('Не удалось загрузить фильтры. Попробуйте обновить страницу.');
+        }
+      } finally {
+        if (isMounted) {
+          setFiltersLoading(false);
+        }
+      }
+    };
+
+    loadFilterOptions();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const getOptionLabel = (
+    options: { value: string; label: string }[],
+    value: string,
+    fallback: string
+  ) => {
+    if (!value || value === 'all') {
+      return fallback;
+    }
+    return options.find((option) => option.value === value)?.label || fallback;
   };
-  
-  const handleDownloadReport = () => {
-    console.log('Скачивание отчета');
+
+  const buildReportFilters = (params: ReportParamsSnapshot) => {
+    const filters: Record<string, string> = {};
+
+    if (params.dateFrom) {
+      filters.date_from = params.dateFrom;
+    }
+    if (params.dateTo) {
+      filters.date_to = params.dateTo;
+    }
+    if (params.department && params.department !== 'all') {
+      filters.department = params.department;
+    }
+    if (params.type && params.type !== 'all') {
+      filters.incident_type = params.type;
+    }
+    if (params.status && params.status !== 'all') {
+      filters.status = params.status;
+    }
+
+    return filters;
+  };
+
+  const triggerBlobDownload = (blob: Blob, fileName: string) => {
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', fileName);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const exportIncidents = async (
+    filters: Record<string, string>,
+    summarySource: ReportParamsSnapshot | null
+  ) => {
+    const response = await apiClient.post(
+      '/incidents/export/',
+      {},
+      {
+        params: filters,
+        responseType: 'blob'
+      }
+    );
+
+    const fileName = getFileNameFromDisposition(response.headers?.['content-disposition']);
+    triggerBlobDownload(response.data, fileName);
+
+    if (summarySource) {
+      setReportGenerated(true);
+      setLastReportFilters(filters);
+      const departmentOptionsSource = isDepartmentLocked && userDepartment ? departmentLockedOption : departmentOptions;
+
+      setLastReportSummary({
+        dateFrom: summarySource.dateFrom,
+        dateTo: summarySource.dateTo,
+        departmentLabel: getOptionLabel(
+          departmentOptionsSource,
+          summarySource.department,
+          isDepartmentLocked && userDepartment ? userDepartment.label : 'Все подразделения'
+        ),
+        typeLabel: getOptionLabel(typeOptions, summarySource.type, 'Все типы'),
+        statusLabel: getOptionLabel(statusOptions, summarySource.status, 'Все статусы')
+      });
+    }
+  };
+
+  const getPeriodSummaryLabel = (summary: ReportSummary) => {
+    if (summary.dateFrom && summary.dateTo) {
+      return `${formatDateForDisplay(summary.dateFrom)} — ${formatDateForDisplay(summary.dateTo)}`;
+    }
+    if (summary.dateFrom) {
+      return `с ${formatDateForDisplay(summary.dateFrom)}`;
+    }
+    if (summary.dateTo) {
+      return `до ${formatDateForDisplay(summary.dateTo)}`;
+    }
+    return 'Все даты';
+  };
+
+  const handlePeriodPreset = (preset: 'current-month' | 'last-month' | 'current-year') => {
+    const now = new Date();
+    let start: Date;
+    let end: Date;
+
+    if (preset === 'current-month') {
+      start = new Date(now.getFullYear(), now.getMonth(), 1);
+      end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    } else if (preset === 'last-month') {
+      start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      end = new Date(now.getFullYear(), now.getMonth(), 0);
+    } else {
+      start = new Date(now.getFullYear(), 0, 1);
+      end = new Date(now.getFullYear(), 11, 31);
+    }
+
+    setReportParams((prev) => ({
+      ...prev,
+      period: preset,
+      dateFrom: formatDateToInput(start),
+      dateTo: formatDateToInput(end)
+    }));
+  };
+
+  const handleDateChange = (key: 'dateFrom' | 'dateTo', value: string) => {
+    setReportParams((prev) => ({
+      ...prev,
+      period: '',
+      [key]: value
+    }));
+  };
+
+  const handleGenerateReport = async () => {
+    setReportError(null);
+    setIsGeneratingReport(true);
+    const snapshot: ReportParamsSnapshot = {
+      dateFrom: reportParams.dateFrom,
+      dateTo: reportParams.dateTo,
+      department: reportParams.department,
+      type: reportParams.type,
+      status: reportParams.status
+    };
+    const filters = buildReportFilters(snapshot);
+
+    try {
+      await exportIncidents(filters, snapshot);
+    } catch (error: any) {
+      console.error('Failed to generate report', error);
+      setReportError(error?.response?.data?.detail || 'Не удалось сформировать отчет.');
+    } finally {
+      setIsGeneratingReport(false);
+    }
+  };
+
+  const handleDownloadReport = async () => {
+    if (!reportGenerated || !lastReportSummary) {
+      await handleGenerateReport();
+      return;
+    }
+
+    setReportError(null);
+    setIsGeneratingReport(true);
+
+    try {
+      await exportIncidents(lastReportFilters, null);
+    } catch (error: any) {
+      console.error('Failed to download report', error);
+      setReportError(error?.response?.data?.detail || 'Не удалось скачать отчет.');
+    } finally {
+      setIsGeneratingReport(false);
+    }
+  };
+
+  const typeDistributionData = useMemo(() => {
+    const items = statisticsData?.by_type ?? [];
+    return items.map((item, index) => ({
+      name: item.incident_type__name || 'Не указан',
+      value: item.count || 0,
+      color:
+        item.incident_type__color && /^#[0-9A-Fa-f]{6}$/.test(item.incident_type__color)
+          ? item.incident_type__color
+          : TYPE_COLORS[index % TYPE_COLORS.length]
+    }));
+  }, [statisticsData]);
+
+  const statusDistributionData = useMemo(() => {
+    const items = statisticsData?.by_status ?? [];
+    return items.map((item) => ({
+      status: item.status__name || 'Не указан',
+      count: item.count || 0,
+      isClosed: item.status__is_closed || false
+    }));
+  }, [statisticsData]);
+
+  const departmentData = useMemo(() => {
+    const items = analyticsData?.by_department ?? [];
+    return items.map((item) => ({
+      department: item.department__name || 'Не указано',
+      count: item.count || 0
+    })).slice(0, 5);
+  }, [analyticsData]);
+
+  const monthlyDynamicsData = useMemo(() => {
+    const items = analyticsData?.by_month ?? [];
+    const countByMonth = new Map<string, number>();
+
+    items.forEach((item) => {
+      if (item.month) {
+        countByMonth.set(item.month, item.count || 0);
+      }
+    });
+
+    const months: { month: string; count: number }[] = [];
+    const now = new Date();
+
+    for (let i = 5; i >= 0; i -= 1) {
+      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      months.push({
+        month: MONTH_LABELS[date.getMonth()],
+        count: countByMonth.get(key) ?? 0
+      });
+    }
+
+    return months;
+  }, [analyticsData]);
+
+  const hasTypeData = typeDistributionData.some((item) => item.value > 0);
+  const hasStatusData = statusDistributionData.some((item) => item.count > 0);
+  const hasDepartmentData = departmentData.some((item) => item.count > 0);
+
+  const isManager = userRole === 'manager';
+  const isDepartmentLocked = isManager;
+  const departmentLockedOption = userDepartment
+    ? [{ value: userDepartment.id, label: userDepartment.label }]
+    : [{ value: '', label: isProfileLoading ? 'Определяем подразделение...' : 'Подразделение недоступно' }];
+  const departmentSelectOptions = isDepartmentLocked ? departmentLockedOption : departmentOptions;
+  const departmentValue = isDepartmentLocked ? (userDepartment?.id || '') : reportParams.department;
+  const departmentControlDisabled = filtersLoading || (isDepartmentLocked ? isProfileLoading || !userDepartment : false);
+  const handleDepartmentChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    if (isDepartmentLocked) {
+      return;
+    }
+    const { value } = event.target;
+    setReportParams((prev) => ({ ...prev, department: value }));
   };
   
   return (
@@ -110,77 +558,105 @@ export const AnalyticsPage: React.FC = () => {
       
       {/* Общая статистика */}
       {activeTab === 'statistics' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Распределение по типам */}
-          <Card title="Распределение по типам">
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={typeDistributionData}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                  outerRadius={80}
-                  fill="#8884d8"
-                  dataKey="value"
-                >
-                  {typeDistributionData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="mt-4 space-y-2">
-              {typeDistributionData.map((item) => (
-                <div key={item.name} className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded" style={{ backgroundColor: item.color }} />
-                  <span className="text-[#6B7280]">{item.name}</span>
-                </div>
-              ))}
-            </div>
+        isLoadingStatistics ? (
+          <Card title="Общая статистика">
+            <p className="text-[#6B7280]">Загружаем актуальные данные...</p>
           </Card>
-          
-          {/* Динамика по месяцам */}
-          <Card title="Динамика по месяцам">
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={monthlyDynamicsData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                <XAxis dataKey="month" stroke="#6B7280" />
-                <YAxis stroke="#6B7280" />
-                <Tooltip />
-                <Bar dataKey="count" fill="#CF1217" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+        ) : statisticsError ? (
+          <Card title="Общая статистика">
+            <p className="text-[#B91C1C]">{statisticsError}</p>
           </Card>
-          
-          {/* Топ подразделений */}
-          <Card title="Топ подразделений по количеству">
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={departmentData} layout="vertical" margin={{ top: 5, right: 30, left: 60, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                <XAxis type="number" stroke="#6B7280" />
-                <YAxis dataKey="department" type="category" stroke="#6B7280" width={100} />
-                <Tooltip />
-                <Bar dataKey="count" fill="#F59E0B" radius={[0, 8, 8, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </Card>
-          
-          {/* Распределение по статусам */}
-          <Card title="Распределение по статусам">
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={statusData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                <XAxis dataKey="status" stroke="#6B7280" />
-                <YAxis stroke="#6B7280" />
-                <Tooltip />
-                <Bar dataKey="count" fill="#10B981" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </Card>
-        </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Распределение по типам */}
+            <Card title="Распределение по типам">
+              {hasTypeData ? (
+                <>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie
+                        data={typeDistributionData}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={({ name, percent }) => {
+                          const safePercent = Number.isFinite(percent) ? percent : 0;
+                          return `${name}: ${(safePercent * 100).toFixed(0)}%`;
+                        }}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="value"
+                      >
+                        {typeDistributionData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="mt-4 space-y-2">
+                    {typeDistributionData.map((item) => (
+                      <div key={item.name} className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded" style={{ backgroundColor: item.color }} />
+                        <span className="text-[#6B7280]">{item.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="text-[#6B7280] text-sm">Недостаточно данных для отображения.</p>
+              )}
+            </Card>
+            
+            {/* Динамика по месяцам */}
+            <Card title="Динамика по месяцам">
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={monthlyDynamicsData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                  <XAxis dataKey="month" stroke="#6B7280" />
+                  <YAxis stroke="#6B7280" allowDecimals={false} />
+                  <Tooltip />
+                  <Bar dataKey="count" fill="#CF1217" radius={[8, 8, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+              <p className="text-xs text-[#9CA3AF] mt-2">Показываются последние 6 месяцев, включая текущий.</p>
+            </Card>
+            
+            {/* Топ подразделений */}
+            <Card title="Топ подразделений по количеству">
+              {hasDepartmentData ? (
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={departmentData} layout="vertical" margin={{ top: 5, right: 30, left: 60, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                    <XAxis type="number" stroke="#6B7280" allowDecimals={false} />
+                    <YAxis dataKey="department" type="category" stroke="#6B7280" width={120} />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="#F59E0B" radius={[0, 8, 8, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="text-[#6B7280] text-sm">Нет данных по подразделениям.</p>
+              )}
+            </Card>
+            
+            {/* Распределение по статусам */}
+            <Card title="Распределение по статусам">
+              {hasStatusData ? (
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={statusDistributionData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                    <XAxis dataKey="status" stroke="#6B7280" />
+                    <YAxis stroke="#6B7280" allowDecimals={false} />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="#10B981" radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="text-[#6B7280] text-sm">Нет данных по статусам.</p>
+              )}
+            </Card>
+          </div>
+        )
       )}
       
       {/* Формирование отчета */}
@@ -195,23 +671,23 @@ export const AnalyticsPage: React.FC = () => {
                 </label>
                 <div className="flex gap-2 mb-3">
                   <Button 
-                    variant="secondary" 
+                    variant={reportParams.period === 'current-month' ? 'primary' : 'secondary'}
                     size="sm"
-                    onClick={() => setReportParams(prev => ({ ...prev, period: 'current-month' }))}
+                    onClick={() => handlePeriodPreset('current-month')}
                   >
                     Текущий месяц
                   </Button>
                   <Button 
-                    variant="secondary" 
+                    variant={reportParams.period === 'last-month' ? 'primary' : 'secondary'}
                     size="sm"
-                    onClick={() => setReportParams(prev => ({ ...prev, period: 'last-month' }))}
+                    onClick={() => handlePeriodPreset('last-month')}
                   >
                     Прошлый месяц
                   </Button>
                   <Button 
-                    variant="secondary" 
+                    variant={reportParams.period === 'current-year' ? 'primary' : 'secondary'}
                     size="sm"
-                    onClick={() => setReportParams(prev => ({ ...prev, period: 'current-year' }))}
+                    onClick={() => handlePeriodPreset('current-year')}
                   >
                     Текущий год
                   </Button>
@@ -220,44 +696,73 @@ export const AnalyticsPage: React.FC = () => {
                   <Input
                     type="date"
                     placeholder="От"
+                    value={reportParams.dateFrom}
+                    onChange={(e) => handleDateChange('dateFrom', e.target.value)}
                   />
                   <Input
                     type="date"
                     placeholder="До"
+                    value={reportParams.dateTo}
+                    onChange={(e) => handleDateChange('dateTo', e.target.value)}
                   />
                 </div>
               </div>
               
               {/* Фильтры */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Select
-                  label="Подразделение"
-                  options={departments}
-                  value={reportParams.department}
-                  onChange={(e) => setReportParams(prev => ({ ...prev, department: e.target.value }))}
-                />
-                <Select
-                  label="Тип"
-                  options={types}
-                  value={reportParams.type}
-                  onChange={(e) => setReportParams(prev => ({ ...prev, type: e.target.value }))}
-                />
-                <Select
-                  label="Статус"
-                  options={statuses}
-                  value={reportParams.status}
-                  onChange={(e) => setReportParams(prev => ({ ...prev, status: e.target.value }))}
-                />
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <Select
+                    label="Подразделение"
+                    options={departmentSelectOptions}
+                    value={departmentValue}
+                    onChange={handleDepartmentChange}
+                    disabled={departmentControlDisabled}
+                  />
+                  <Select
+                    label="Тип"
+                    options={typeOptions}
+                    value={reportParams.type}
+                    onChange={(e) => setReportParams(prev => ({ ...prev, type: e.target.value }))}
+                    disabled={filtersLoading}
+                  />
+                  <Select
+                    label="Статус"
+                    options={statusOptions}
+                    value={reportParams.status}
+                    onChange={(e) => setReportParams(prev => ({ ...prev, status: e.target.value }))}
+                    disabled={filtersLoading}
+                  />
+                </div>
+                {filtersLoading && (
+                  <p className="text-sm text-[#6B7280]">Загружаем фильтры...</p>
+                )}
+                {filtersError && (
+                  <p className="text-sm text-[#B91C1C]">{filtersError}</p>
+                )}
+                {profileError && (
+                  <p className="text-sm text-[#B91C1C]">{profileError}</p>
+                )}
+                {isDepartmentLocked && userDepartment && (
+                  <p className="text-xs text-[#6B7280]">Как руководитель вы можете формировать отчеты только по своему подразделению.</p>
+                )}
               </div>
               
-              <Button onClick={handleGenerateReport} icon={<TrendingUp className="w-4 h-4" />}>
+              <Button 
+                onClick={handleGenerateReport} 
+                icon={<TrendingUp className="w-4 h-4" />} 
+                loading={isGeneratingReport}
+                disabled={filtersLoading || (isDepartmentLocked && (!userDepartment || isProfileLoading))}
+              >
                 Сформировать
               </Button>
+              {reportError && (
+                <p className="text-sm text-[#B91C1C]">{reportError}</p>
+              )}
             </div>
           </Card>
           
           {/* Результаты отчета */}
-          {reportGenerated && (
+          {reportGenerated && lastReportSummary && (
             <Card 
               title="Результаты отчета"
               actions={
@@ -265,6 +770,7 @@ export const AnalyticsPage: React.FC = () => {
                   variant="secondary" 
                   size="sm"
                   onClick={handleDownloadReport}
+                  loading={isGeneratingReport}
                   icon={<Download className="w-4 h-4" />}
                 >
                   Скачать (XLSX)
@@ -275,36 +781,14 @@ export const AnalyticsPage: React.FC = () => {
                 <div className="p-4 bg-[#F9FAFB] rounded-lg">
                   <h4 className="text-[#1F2937] mb-2">Отчет по происшествиям</h4>
                   <p className="text-[#6B7280] text-sm">
-                    Период: Февраль 2026<br />
-                    Подразделение: Все<br />
-                    Тип: Все<br />
-                    Статус: Все
+                    Период: {getPeriodSummaryLabel(lastReportSummary)}<br />
+                    Подразделение: {lastReportSummary.departmentLabel}<br />
+                    Тип: {lastReportSummary.typeLabel}<br />
+                    Статус: {lastReportSummary.statusLabel}
                   </p>
                 </div>
-                
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-[#E5E7EB]">
-                        <th className="text-left py-3 px-4 text-[#6B7280] font-medium">Номер</th>
-                        <th className="text-left py-3 px-4 text-[#6B7280] font-medium">Тип</th>
-                        <th className="text-left py-3 px-4 text-[#6B7280] font-medium">Подразделение</th>
-                        <th className="text-left py-3 px-4 text-[#6B7280] font-medium">Дата</th>
-                        <th className="text-left py-3 px-4 text-[#6B7280] font-medium">Статус</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[1, 2, 3, 4, 5].map((i) => (
-                        <tr key={i} className="border-b border-[#E5E7EB]">
-                          <td className="py-3 px-4 text-[#1F2937]">INC-2026-00{i}</td>
-                          <td className="py-3 px-4 text-[#1F2937]">Авария</td>
-                          <td className="py-3 px-4 text-[#1F2937]">Производство</td>
-                          <td className="py-3 px-4 text-[#6B7280]">2026-02-0{i}</td>
-                          <td className="py-3 px-4 text-[#10B981]">Завершено</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="p-4 border border-dashed border-[#D1D5DB] rounded-lg text-sm text-[#6B7280]">
+                  Файл с данными был автоматически выгружен в формате XLSX. При необходимости вы можете повторить выгрузку, нажав кнопку "Скачать".
                 </div>
               </div>
             </Card>

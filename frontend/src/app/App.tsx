@@ -172,7 +172,7 @@ const App: React.FC = () => {
         )}
         
         {state.currentPage === 'analytics' && (
-          <AnalyticsPage />
+          <AnalyticsPage userRole={state.userRole} />
         )}
         
         {state.currentPage === 'administration' && (
