@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Card } from '../components/card';
 import { Button } from '../components/button';
 import { Input } from '../components/input';
@@ -6,87 +6,32 @@ import { Select } from '../components/select';
 import { Download, TrendingUp } from 'lucide-react';
 import apiClient from '../../api/client';
 import { UserRole } from '../types';
-import { 
-  PieChart, Pie, Cell, 
-  BarChart, Bar, 
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
+import {
+  PieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer
 } from 'recharts';
-
-const TYPE_COLORS = ['#CF1217', '#F59E0B', '#EF4444', '#3B82F6', '#10B981', '#8B5CF6', '#6366F1', '#F472B6'];
-const MONTH_LABELS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
-
-const formatDateToInput = (date: Date) => date.toISOString().slice(0, 10);
-
-const formatDateForDisplay = (value?: string) => {
-  if (!value) {
-    return 'Все даты';
-  }
-  try {
-    return new Date(value).toLocaleDateString('ru-RU');
-  } catch (error) {
-    return value;
-  }
-};
-
-const getFileNameFromDisposition = (header?: string | null) => {
-  if (header) {
-    const match = /filename="?([^";]+)"?/i.exec(header);
-    if (match && match[1]) {
-      return match[1];
-    }
-  }
-  return `incidents_report_${new Date().toISOString().slice(0, 10)}.xlsx`;
-};
-
-interface StatusStat {
-  status__name: string;
-  status__is_closed: boolean;
-  count: number;
-}
-
-interface TypeStat {
-  incident_type__name: string;
-  incident_type__color?: string;
-  count: number;
-}
-
-interface DepartmentStat {
-  department__name: string;
-  count: number;
-}
-
-interface MonthStat {
-  month: string;
-  count: number;
-  closed_count?: number;
-}
-
-interface StatisticsResponse {
-  total?: number;
-  by_status?: StatusStat[];
-  by_type?: TypeStat[];
-}
-
-interface AnalyticsResponse {
-  by_department?: DepartmentStat[];
-  by_month?: MonthStat[];
-}
-
-interface ReportParamsSnapshot {
-  dateFrom?: string;
-  dateTo?: string;
-  department: string;
-  type: string;
-  status: string;
-}
-
-interface ReportSummary {
-  dateFrom?: string;
-  dateTo?: string;
-  departmentLabel: string;
-  typeLabel: string;
-  statusLabel: string;
-}
+import {
+  buildReportFilters,
+  formatDateToInput,
+  getFileNameFromDisposition,
+  getOptionLabel,
+  getPeriodSummaryLabel,
+  MONTH_LABELS,
+  triggerBlobDownload,
+  TYPE_COLORS
+} from './analytics/utils';
+import { useAnalyticsData } from './analytics/hooks/useAnalyticsData';
+import { useReportFilters } from './analytics/hooks/useReportFilters';
+import { useManagerDepartment } from './analytics/hooks/useManagerDepartment';
+import { ReportParamsSnapshot, ReportSummary } from './analytics/types';
 
 interface AnalyticsPageProps {
   userRole: UserRole;
@@ -103,235 +48,39 @@ export const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ userRole }) => {
     status: 'all'
   });
   const [reportGenerated, setReportGenerated] = useState(false);
-  const [statisticsData, setStatisticsData] = useState<StatisticsResponse | null>(null);
-  const [analyticsData, setAnalyticsData] = useState<AnalyticsResponse | null>(null);
-  const [isLoadingStatistics, setIsLoadingStatistics] = useState(true);
-  const [statisticsError, setStatisticsError] = useState<string | null>(null);
-  const [departmentOptions, setDepartmentOptions] = useState<{ value: string; label: string }[]>([
-    { value: 'all', label: 'Все подразделения' }
-  ]);
-  const [typeOptions, setTypeOptions] = useState<{ value: string; label: string }[]>([
-    { value: 'all', label: 'Все типы' }
-  ]);
-  const [statusOptions, setStatusOptions] = useState<{ value: string; label: string }[]>([
-    { value: 'all', label: 'Все статусы' }
-  ]);
-  const [filtersLoading, setFiltersLoading] = useState(true);
-  const [filtersError, setFiltersError] = useState<string | null>(null);
+  const {
+    statisticsData,
+    analyticsData,
+    isLoadingStatistics,
+    statisticsError
+  } = useAnalyticsData();
+  const {
+    departmentOptions,
+    typeOptions,
+    statusOptions,
+    filtersLoading,
+    filtersError
+  } = useReportFilters();
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
   const [lastReportFilters, setLastReportFilters] = useState<Record<string, string>>({});
   const [lastReportSummary, setLastReportSummary] = useState<ReportSummary | null>(null);
-  const [userDepartment, setUserDepartment] = useState<{ id: string; label: string } | null>(null);
-  const [isProfileLoading, setIsProfileLoading] = useState(false);
-  const [profileError, setProfileError] = useState<string | null>(null);
+  const handleManagerDepartmentResolved = useCallback(
+    (departmentId: string) => {
+      setReportParams((prev) => ({ ...prev, department: departmentId }));
+    },
+    [setReportParams]
+  );
+  const { userDepartment, isProfileLoading, profileError } = useManagerDepartment(
+    userRole,
+    handleManagerDepartmentResolved
+  );
 
-  useEffect(() => {
-    let isMounted = true;
+  
 
-    const fetchAnalyticsData = async () => {
-      try {
-        setIsLoadingStatistics(true);
-        setStatisticsError(null);
+  
 
-        const [statisticsResponse, analyticsResponse] = await Promise.all([
-          apiClient.get('/incidents/statistics/'),
-          apiClient.get('/incidents/analytics/')
-        ]);
-
-        if (!isMounted) {
-          return;
-        }
-
-        setStatisticsData(statisticsResponse.data || null);
-        setAnalyticsData(analyticsResponse.data || null);
-      } catch (error) {
-        console.error('Failed to load analytics data', error);
-        if (isMounted) {
-          setStatisticsError('Не удалось загрузить статистику. Попробуйте обновить страницу.');
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoadingStatistics(false);
-        }
-      }
-    };
-
-    fetchAnalyticsData();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (userRole !== 'manager') {
-      setUserDepartment(null);
-      setProfileError(null);
-      return undefined;
-    }
-
-    let isMounted = true;
-
-    const fetchProfile = async () => {
-      try {
-        setIsProfileLoading(true);
-        setProfileError(null);
-        const res = await apiClient.get('/users/profile/');
-        if (!isMounted) {
-          return;
-        }
-        const data = res.data || {};
-        const userData = data.user || data;
-        const profile = userData.profile || data.profile || {};
-
-        let departmentId: string | null = null;
-        const profileDepartment =
-          profile.department !== undefined && profile.department !== null
-            ? profile.department
-            : profile.department_id;
-
-        if (profileDepartment !== undefined && profileDepartment !== null) {
-          departmentId = String(profileDepartment);
-        }
-
-        const departmentLabel =
-          userData.department_name ||
-          profile.department_name ||
-          data.department_name ||
-          'Моё подразделение';
-
-        if (departmentId) {
-          setUserDepartment({ id: departmentId, label: departmentLabel });
-          setReportParams((prev) => ({ ...prev, department: departmentId }));
-        } else {
-          setProfileError('Не удалось определить подразделение текущего пользователя.');
-        }
-      } catch (error) {
-        console.error('Failed to load user profile', error);
-        if (isMounted) {
-          setProfileError('Не удалось загрузить профиль пользователя.');
-        }
-      } finally {
-        if (isMounted) {
-          setIsProfileLoading(false);
-        }
-      }
-    };
-
-    fetchProfile();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [userRole]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const loadFilterOptions = async () => {
-      try {
-        setFiltersLoading(true);
-        setFiltersError(null);
-
-        const [departmentsResponse, typesResponse, statusesResponse] = await Promise.all([
-          apiClient.get('/users/departments/'),
-          apiClient.get('/incidents/types/'),
-          apiClient.get('/incidents/statuses/')
-        ]);
-
-        if (!isMounted) {
-          return;
-        }
-
-        const departmentsData = Array.isArray(departmentsResponse.data)
-          ? departmentsResponse.data
-          : departmentsResponse.data?.results || [];
-        const typesData = Array.isArray(typesResponse.data)
-          ? typesResponse.data
-          : typesResponse.data?.results || [];
-        const statusesData = Array.isArray(statusesResponse.data)
-          ? statusesResponse.data
-          : statusesResponse.data?.results || [];
-
-        setDepartmentOptions([
-          { value: 'all', label: 'Все подразделения' },
-          ...departmentsData.map((dept: any) => ({ value: String(dept.id), label: dept.name }))
-        ]);
-
-        setTypeOptions([
-          { value: 'all', label: 'Все типы' },
-          ...typesData
-            .filter((type: any) => type.is_active !== false)
-            .map((type: any) => ({ value: String(type.id), label: type.name }))
-        ]);
-
-        setStatusOptions([
-          { value: 'all', label: 'Все статусы' },
-          ...statusesData.map((status: any) => ({ value: String(status.id), label: status.name }))
-        ]);
-      } catch (error) {
-        console.error('Failed to load report filters', error);
-        if (isMounted) {
-          setFiltersError('Не удалось загрузить фильтры. Попробуйте обновить страницу.');
-        }
-      } finally {
-        if (isMounted) {
-          setFiltersLoading(false);
-        }
-      }
-    };
-
-    loadFilterOptions();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  const getOptionLabel = (
-    options: { value: string; label: string }[],
-    value: string,
-    fallback: string
-  ) => {
-    if (!value || value === 'all') {
-      return fallback;
-    }
-    return options.find((option) => option.value === value)?.label || fallback;
-  };
-
-  const buildReportFilters = (params: ReportParamsSnapshot) => {
-    const filters: Record<string, string> = {};
-
-    if (params.dateFrom) {
-      filters.date_from = params.dateFrom;
-    }
-    if (params.dateTo) {
-      filters.date_to = params.dateTo;
-    }
-    if (params.department && params.department !== 'all') {
-      filters.department = params.department;
-    }
-    if (params.type && params.type !== 'all') {
-      filters.incident_type = params.type;
-    }
-    if (params.status && params.status !== 'all') {
-      filters.status = params.status;
-    }
-
-    return filters;
-  };
-
-  const triggerBlobDownload = (blob: Blob, fileName: string) => {
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', fileName);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(url);
-  };
+  
 
   const exportIncidents = async (
     filters: Record<string, string>,
@@ -366,19 +115,6 @@ export const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ userRole }) => {
         statusLabel: getOptionLabel(statusOptions, summarySource.status, 'Все статусы')
       });
     }
-  };
-
-  const getPeriodSummaryLabel = (summary: ReportSummary) => {
-    if (summary.dateFrom && summary.dateTo) {
-      return `${formatDateForDisplay(summary.dateFrom)} — ${formatDateForDisplay(summary.dateTo)}`;
-    }
-    if (summary.dateFrom) {
-      return `с ${formatDateForDisplay(summary.dateFrom)}`;
-    }
-    if (summary.dateTo) {
-      return `до ${formatDateForDisplay(summary.dateTo)}`;
-    }
-    return 'Все даты';
   };
 
   const handlePeriodPreset = (preset: 'current-month' | 'last-month' | 'current-year') => {

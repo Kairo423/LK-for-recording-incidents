@@ -9,6 +9,10 @@ import { AnalyticsPage } from './pages/analytics';
 import { AdministrationPage } from './pages/administration';
 import { PageType, UserRole, AppState } from './types';
 
+const APP_STATE_STORAGE_KEY = 'appState';
+
+const isPersistablePage = (page: PageType) => page !== 'login';
+
 // Vite exposes env vars on import.meta.env and requires VITE_ prefix for custom vars.
 const API_BASE = ((import.meta as any).env.VITE_API_URL || 'http://localhost:8000/api').replace(/\/$/, '');
 
@@ -25,21 +29,52 @@ const App: React.FC = () => {
     // restore from localStorage
     const token = localStorage.getItem('token');
     const userRaw = localStorage.getItem('user');
+    const persistedStateRaw = localStorage.getItem(APP_STATE_STORAGE_KEY);
+    let persistedPage: PageType | undefined;
+    let persistedIncidentId: number | undefined;
+
+    if (persistedStateRaw) {
+      try {
+        const parsed = JSON.parse(persistedStateRaw);
+        if (parsed.currentPage && isPersistablePage(parsed.currentPage)) {
+          persistedPage = parsed.currentPage as PageType;
+        }
+        if (typeof parsed.selectedIncidentId === 'number') {
+          persistedIncidentId = parsed.selectedIncidentId;
+        }
+      } catch (e) {
+        // ignore broken state
+      }
+    }
     if (token && userRaw) {
       try {
         const u = JSON.parse(userRaw);
         setState({
-          currentPage: 'dashboard',
+          currentPage: persistedPage || 'dashboard',
           isAuthenticated: true,
           userRole: (u.role as UserRole) || 'employee',
           userName: u.userName || '',
-          selectedIncidentId: undefined
+          selectedIncidentId: persistedPage === 'incident-detail' ? persistedIncidentId : undefined
         });
       } catch (e) {
         // ignore
       }
     }
   }, []);
+
+  useEffect(() => {
+    if (state.isAuthenticated && isPersistablePage(state.currentPage)) {
+      localStorage.setItem(
+        APP_STATE_STORAGE_KEY,
+        JSON.stringify({
+          currentPage: state.currentPage,
+          selectedIncidentId: state.selectedIncidentId ?? null
+        })
+      );
+    } else if (!state.isAuthenticated) {
+      localStorage.removeItem(APP_STATE_STORAGE_KEY);
+    }
+  }, [state.currentPage, state.selectedIncidentId, state.isAuthenticated]);
 
   const handleLogin = async (email: string, password: string) => {
     // send credentials to backend login endpoint
@@ -112,6 +147,7 @@ const App: React.FC = () => {
       // Всегда очищаем локальное состояние, даже если запрос не удался
       localStorage.removeItem('token');
       localStorage.removeItem('user');
+  localStorage.removeItem(APP_STATE_STORAGE_KEY);
       
       setState({
         currentPage: 'login',
