@@ -1,25 +1,103 @@
-from django.shortcuts import render
-from rest_framework import status, generics, permissions
+from datetime import timedelta
+
+from rest_framework import status, generics, permissions, serializers
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
-from rest_framework.authtoken.models import Token
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.views import APIView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
+from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.db.models import Q
 from .serializers import (
     UserSerializer, UserCreateUpdateSerializer, GroupSerializer,
-    UserProfileSerializer, DepartmentSerializer
+    UserProfileSerializer, DepartmentSerializer, SystemSettingsSerializer
 )
 from .permissions import IsManager, IsAdmin, IsEmployeeOrReadOnly
+from .models import SystemSettings
 
 User = get_user_model()
 
 # Swagger/OpenAPI helpers
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-from .serializers import DepartmentSerializer
 from .permissions import IsAdmin
+
+
+def get_user_role(user):
+    if user.groups.filter(name__iexact='Администратор').exists() or user.is_superuser:
+        return 'admin'
+    if user.groups.filter(name__iexact='Руководитель').exists():
+        return 'manager'
+    return 'employee'
+
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    # allow clients to send either 'username' or 'email' (email is primary on the login form)
+    username = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    email = serializers.CharField(required=False, allow_blank=True, write_only=True)
+
+    def validate(self, attrs):
+        email = attrs.pop('email', None)
+        username_field = self.username_field
+        if email and not attrs.get(username_field):
+            user_obj = User.objects.filter(email__iexact=email).first()
+            if user_obj:
+                attrs[username_field] = getattr(user_obj, username_field)
+
+        data = super().validate(attrs)
+
+        settings_obj = SystemSettings.get_solo()
+        refresh = RefreshToken.for_user(self.user)
+        refresh.set_exp(lifetime=timedelta(days=settings_obj.refresh_token_lifetime_days))
+        access_token = refresh.access_token
+        access_token.set_exp(lifetime=timedelta(minutes=settings_obj.access_token_lifetime_minutes))
+
+        data['refresh'] = str(refresh)
+        data['access'] = str(access_token)
+        data['user'] = UserSerializer(self.user).data
+        data['role'] = get_user_role(self.user)
+        return data
+
+
+class CustomTokenRefreshSerializer(TokenRefreshSerializer):
+    def validate(self, attrs):
+        refresh_value = attrs.get('refresh')
+        data = super().validate(attrs)
+        settings_obj = SystemSettings.get_solo()
+        if not refresh_value:
+            return data
+        refresh_token = RefreshToken(refresh_value)
+        access_token = refresh_token.access_token
+        access_token.set_exp(lifetime=timedelta(minutes=settings_obj.access_token_lifetime_minutes))
+        data['access'] = str(access_token)
+        return data
+
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    serializer_class = CustomTokenObtainPairSerializer
+
+
+class CustomTokenRefreshView(TokenRefreshView):
+    serializer_class = CustomTokenRefreshSerializer
+
+
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        refresh_token = request.data.get('refresh')
+        if not refresh_token:
+            return Response({'detail': 'Refresh token is required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+        except Exception:
+            return Response({'detail': 'Невалидный refresh token'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({'message': 'Выход выполнен успешно'})
 
 @swagger_auto_schema(method='post', request_body=UserCreateUpdateSerializer, responses={201: UserSerializer})
 @api_view(['POST'])
@@ -34,74 +112,16 @@ def register_view(request):
     serializer = UserCreateUpdateSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
-        token, _ = Token.objects.get_or_create(user=user)
 
         groups = [{'id': g.id, 'name': g.name} for g in user.groups.all()]
 
         return Response({
             'user': UserSerializer(user).data,
-            'token': token.key,
             'groups': groups,
             'message': 'Пользователь успешно зарегистрирован'
         }, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-@swagger_auto_schema(method='post', request_body=openapi.Schema(type=openapi.TYPE_OBJECT, properties={'email': openapi.Schema(type=openapi.TYPE_STRING), 'username': openapi.Schema(type=openapi.TYPE_STRING), 'password': openapi.Schema(type=openapi.TYPE_STRING)}), responses={200: UserSerializer})
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def login_view(request):
-    """Вход в систему — поддерживается аутентификация по email или username.
-
-    Ожидаемые поля: `password` и `email` или `username`.
-    """
-    data = request.data
-    username = data.get('username')
-    email = data.get('email')
-    password = data.get('password')
-
-    if not password or (not username and not email):
-        return Response({'non_field_errors': ['Необходимо указать email/username и пароль']}, status=status.HTTP_400_BAD_REQUEST)
-
-    # Если указан email — найдем username
-    if email and not username:
-        user_obj = User.objects.filter(email__iexact=email).first()
-        if not user_obj:
-            return Response({'non_field_errors': ['Неверное имя пользователя или пароль']}, status=status.HTTP_400_BAD_REQUEST)
-        username = user_obj.get_username()
-
-    from django.contrib.auth import authenticate
-    user = authenticate(username=username, password=password)
-    if not user:
-        return Response({'non_field_errors': ['Неверное имя пользователя или пароль']}, status=status.HTTP_400_BAD_REQUEST)
-
-    token, _ = Token.objects.get_or_create(user=user)
-    groups = [{'id': g.id, 'name': g.name} for g in user.groups.all()]
-    role = 'employee'
-    if user.groups.filter(name__iexact='Администратор').exists():
-        role = 'admin'
-    elif user.groups.filter(name__iexact='Руководитель').exists():
-        role = 'manager'
-
-    return Response({
-        'user': UserSerializer(user).data,
-        'token': token.key,
-        'groups': groups,
-        'role': role,
-        'message': 'Вход выполнен успешно'
-    })
-
-@swagger_auto_schema(method='post', responses={200: openapi.Schema(type=openapi.TYPE_OBJECT, properties={'message': openapi.Schema(type=openapi.TYPE_STRING)})})
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def logout_view(request):
-    """Выход из системы"""
-    try:
-        request.user.auth_token.delete()
-    except Exception as e:
-        return Response({
-            'error': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    return Response({'message': 'Выход выполнен успешно'})
 
 @swagger_auto_schema(method='get', responses={200: UserSerializer})
 @api_view(['GET'])
@@ -230,11 +250,7 @@ def whoami(request):
     groups = [{'id': g.id, 'name': g.name} for g in user.groups.all()]
 
     # role based strictly on group membership
-    role = 'employee'
-    if user.groups.filter(name__iexact='Администратор').exists() or user.groups.filter(name__iexact='Administrator').exists():
-        role = 'admin'
-    elif user.groups.filter(name__iexact='Руководитель').exists() or user.groups.filter(name__iexact='Manager').exists():
-        role = 'manager'
+    role = get_user_role(user)
 
     return Response({
         'user': UserSerializer(user).data,
@@ -298,6 +314,15 @@ def update_contact_view(request):
         return Response({'message': 'Нет изменений'}, status=status.HTTP_200_OK)
 
     return Response({'user': UserSerializer(user).data, 'message': 'Контакты обновлены'})
+
+
+
+class SystemSettingsView(generics.RetrieveUpdateAPIView):
+    serializer_class = SystemSettingsSerializer
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get_object(self):
+        return SystemSettings.get_solo()
 
 
 

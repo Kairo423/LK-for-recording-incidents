@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import User
-from .models import UserProfile, Department
+from .models import UserProfile, Department, SystemSettings
 
 
 class UserProfileInline(admin.StackedInline):
@@ -33,3 +33,7 @@ class DepartmentAdmin(admin.ModelAdmin):
 admin.site.unregister(User)
 admin.site.register(User, UserAdmin)
 admin.site.register(Department, DepartmentAdmin)
+@admin.register(SystemSettings)
+class SystemSettingsAdmin(admin.ModelAdmin):
+    list_display = ('access_token_lifetime_minutes', 'refresh_token_lifetime_days', 'updated_at')
+    readonly_fields = ('updated_at',)

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User, Group
-from .models import UserProfile, Department
+from .models import UserProfile, Department, SystemSettings
 
 
 class GroupSerializer(serializers.ModelSerializer):
@@ -166,3 +166,10 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
             instance.phone = validated_data['phone']
             instance.save()
         return instance
+
+
+class SystemSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SystemSettings
+        fields = ['access_token_lifetime_minutes', 'refresh_token_lifetime_days', 'updated_at']
+        read_only_fields = ['updated_at']

@@ -1,7 +1,5 @@
 from django.db import models
 from django.contrib.auth.models import User
-from django.db.models.signals import post_save
-from django.dispatch import receiver
 
 
 class Department(models.Model):
@@ -79,3 +77,40 @@ class UserProfile(models.Model):
     def get_main_role(self):
         """Получение основной роли (первой группы)"""
         return self.user.groups.first()
+
+
+class SystemSettings(models.Model):
+    """Глобальные системные настройки (singleton)."""
+
+    access_token_lifetime_minutes = models.PositiveIntegerField(
+        default=60,
+        verbose_name="Время жизни access-токена (мин)",
+        help_text="Продолжительность действия access-токена в минутах"
+    )
+    refresh_token_lifetime_days = models.PositiveIntegerField(
+        default=7,
+        verbose_name="Время жизни refresh-токена (дни)",
+        help_text="Продолжительность действия refresh-токена в днях"
+    )
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
+    singleton_enforcer = models.BooleanField(default=True, editable=False, unique=True)
+
+    class Meta:
+        verbose_name = "Системная настройка"
+        verbose_name_plural = "Системные настройки"
+
+    def __str__(self):
+        return "Настройки токенов"
+
+    def save(self, *args, **kwargs):
+        # гарантируем единичную запись
+        self.singleton_enforcer = True
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get_solo(cls):
+        obj, _ = cls.objects.get_or_create(defaults={
+            'access_token_lifetime_minutes': 60,
+            'refresh_token_lifetime_days': 7,
+        })
+        return obj

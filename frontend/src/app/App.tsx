@@ -10,6 +10,8 @@ import { AdministrationPage } from './pages/administration';
 import { PageType, UserRole, AppState } from './types';
 
 const APP_STATE_STORAGE_KEY = 'appState';
+const ACCESS_TOKEN_KEY = 'accessToken';
+const REFRESH_TOKEN_KEY = 'refreshToken';
 
 const isPersistablePage = (page: PageType) => page !== 'login';
 
@@ -27,7 +29,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     // restore from localStorage
-    const token = localStorage.getItem('token');
+    const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
     const userRaw = localStorage.getItem('user');
     const persistedStateRaw = localStorage.getItem(APP_STATE_STORAGE_KEY);
     let persistedPage: PageType | undefined;
@@ -46,7 +48,7 @@ const App: React.FC = () => {
         // ignore broken state
       }
     }
-    if (token && userRaw) {
+    if (accessToken && userRaw) {
       try {
         const u = JSON.parse(userRaw);
         setState({
@@ -82,7 +84,7 @@ const App: React.FC = () => {
       const res = await fetch(`${API_BASE}/users/login/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email, password })
+        body: JSON.stringify({ email: email, username: email, password })
       });
 
       const data = await res.json();
@@ -91,7 +93,8 @@ const App: React.FC = () => {
         throw new Error(err);
       }
 
-      const token = data.token || data.key || data.auth_token || (data.data && data.data.token);
+      const accessToken = data.access;
+      const refreshToken = data.refresh;
       const user = data.user || data || (data.data && data.data.user) || {};
 
       // Prefer server-provided role; if absent, infer from groups
@@ -111,7 +114,12 @@ const App: React.FC = () => {
 
       const userName = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || email;
 
-      if (token) localStorage.setItem('token', token);
+      if (!accessToken || !refreshToken) {
+        throw new Error('Сервер не вернул токены авторизации');
+      }
+
+      localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+      localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
       localStorage.setItem('user', JSON.stringify({ userName, role }));
 
       setState({
@@ -129,25 +137,27 @@ const App: React.FC = () => {
   
   const handleLogout = async () => {
     try {
-      const token = localStorage.getItem('token');
-      
-      // Вызываем бэкенд logout для удаления токена
-      if (token) {
+      const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+      const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+
+      if (accessToken && refreshToken) {
         await fetch(`${API_BASE}/users/logout/`, {
           method: 'POST',
           headers: {
-            'Authorization': `Token ${token}`,
+            'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json'
-          }
+          },
+          body: JSON.stringify({ refresh: refreshToken })
         });
       }
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
       // Всегда очищаем локальное состояние, даже если запрос не удался
-      localStorage.removeItem('token');
+      localStorage.removeItem(ACCESS_TOKEN_KEY);
+      localStorage.removeItem(REFRESH_TOKEN_KEY);
       localStorage.removeItem('user');
-  localStorage.removeItem(APP_STATE_STORAGE_KEY);
+      localStorage.removeItem(APP_STATE_STORAGE_KEY);
       
       setState({
         currentPage: 'login',

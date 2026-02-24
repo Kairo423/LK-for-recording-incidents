@@ -3,7 +3,16 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Count, Sum, Avg, Q
+from django.db import models
+from django.db.models import (
+    Count,
+    Sum,
+    Avg,
+    Q,
+    F,
+    ExpressionWrapper,
+    DurationField,
+)
 from django.utils import timezone
 from datetime import timedelta
 import openpyxl
@@ -143,7 +152,7 @@ class IncidentViewSet(viewsets.ModelViewSet):
         ).order_by('status__sort_order')
         
         # Статистика по типам
-        by_type = queryset.values('incident_type__name').annotate(
+        by_type = queryset.values('incident_type__name', 'incident_type__color').annotate(
             count=Count('id')
         ).order_by('-count')[:5]
         
@@ -191,8 +200,10 @@ class IncidentViewSet(viewsets.ModelViewSet):
         if date_to:
             queryset = queryset.filter(incident_date__lte=date_to)
         
+        grouped_queryset = queryset.order_by()
+
         # Аналитика по подразделениям
-        by_department = queryset.values(
+        by_department = grouped_queryset.values(
             'department__name'
         ).annotate(
             count=Count('id'),
@@ -201,7 +212,7 @@ class IncidentViewSet(viewsets.ModelViewSet):
         ).order_by('-count')
         
         # Аналитика по месяцам
-        by_month = queryset.extra(
+        by_month = grouped_queryset.extra(
             {'month': "to_char(incident_date, 'YYYY-MM')"}
         ).values('month').annotate(
             count=Count('id'),
@@ -216,17 +227,28 @@ class IncidentViewSet(viewsets.ModelViewSet):
             min_cost=models.Min('incident_cost')
         )
         
+        avg_resolution = grouped_queryset.filter(
+            resolved_at__isnull=False
+        ).aggregate(
+            avg_duration=Avg(
+                ExpressionWrapper(
+                    F('resolved_at') - F('created_at'),
+                    output_field=DurationField()
+                )
+            )
+        )
+        avg_resolution_days = None
+        avg_duration = avg_resolution.get('avg_duration')
+        if avg_duration is not None:
+            avg_resolution_days = avg_duration.total_seconds() / 86400
+
         return Response({
             'by_department': by_department,
             'by_month': by_month,
             'cost_analytics': cost_analytics,
             'total_incidents': queryset.count(),
             'closed_incidents': queryset.filter(status__is_closed=True).count(),
-            'avg_resolution_days': queryset.filter(
-                resolved_at__isnull=False
-            ).extra(
-                select={'avg_days': "AVG(EXTRACT(EPOCH FROM (resolved_at - created_at))/86400)"}
-            ).values('avg_days')
+            'avg_resolution_days': avg_resolution_days
         })
     
     @action(detail=False, methods=['get', 'post'])

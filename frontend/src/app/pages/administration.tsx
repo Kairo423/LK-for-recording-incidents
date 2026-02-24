@@ -48,6 +48,7 @@ export const AdministrationPage: React.FC = () => {
     refreshTokenLifetime: '7'
   });
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   
   const handleAddUser = (data: any) => {
     (async () => {
@@ -235,9 +236,30 @@ export const AdministrationPage: React.FC = () => {
   
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Сохранение настроек:', systemSettings);
-    setSettingsSaved(true);
-    setTimeout(() => setSettingsSaved(false), 3000);
+    (async () => {
+      try {
+        setSettingsError(null);
+        const payload = {
+          access_token_lifetime_minutes: Number(systemSettings.accessTokenLifetime),
+          refresh_token_lifetime_days: Number(systemSettings.refreshTokenLifetime)
+        };
+        await apiClient.put('/users/system-settings/', payload);
+        setSettingsSaved(true);
+        setTimeout(() => setSettingsSaved(false), 3000);
+      } catch (err: any) {
+        console.error('Failed to save system settings', err);
+        const resp = err?.response?.data;
+        let message = err?.message || 'Не удалось сохранить настройки';
+        if (resp) {
+          if (resp.detail) message = resp.detail;
+          else if (typeof resp === 'object') {
+            const parts = Object.entries(resp).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`);
+            if (parts.length) message = parts.join('; ');
+          }
+        }
+        setSettingsError(message);
+      }
+    })();
   };
 
   useEffect(() => {
@@ -284,6 +306,19 @@ export const AdministrationPage: React.FC = () => {
         console.error('Failed to load incident types', err);
         // fallback to mock data so UI remains usable in dev if API is unavailable
         setIncidentTypes(mockIncidentTypes);
+      }
+    })();
+    (async () => {
+      try {
+        const res = await apiClient.get('/users/system-settings/');
+        if (cancelled) return;
+        const data = res.data || {};
+        setSystemSettings({
+          accessTokenLifetime: String(data.access_token_lifetime_minutes ?? '60'),
+          refreshTokenLifetime: String(data.refresh_token_lifetime_days ?? '7')
+        });
+      } catch (err: any) {
+        console.error('Failed to load system settings', err);
       }
     })();
     return () => { cancelled = true; };
@@ -511,6 +546,9 @@ export const AdministrationPage: React.FC = () => {
             <div className="flex items-center justify-between pt-4 border-t border-[#E5E7EB]">
               {settingsSaved && (
                 <p className="text-[#10B981]">✓ Настройки сохранены</p>
+              )}
+              {settingsError && (
+                <p className="text-[#EF4444] text-sm mr-auto">{settingsError}</p>
               )}
               <div className={settingsSaved ? '' : 'ml-auto'}>
                 <Button type="submit" icon={<Save className="w-4 h-4" />}>

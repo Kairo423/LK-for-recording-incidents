@@ -40,8 +40,10 @@ export const ProfilePage: React.FC<ProfileProps> = ({ userName }) => {
         console.error('Failed to load profile', err);
         if (err && err.response && (err.response.status === 401 || err.response.status === 403)) {
           // token expired or unauthorized — clear local state so app will return to login
-          localStorage.removeItem('token');
+          localStorage.removeItem('accessToken');
+          localStorage.removeItem('refreshToken');
           localStorage.removeItem('user');
+          localStorage.removeItem('appState');
           window.location.reload();
         }
       }
