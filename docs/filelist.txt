@@ -1,0 +1,190 @@
+﻿+---backend
+    +---apps
+        +---api
+            +---migrations
+                |   __init__.py
+            |   __init__.py
+            |   admin.py
+            |   apps.py
+            |   models.py
+            |   tests.py
+            |   urls.py
+            |   views.py
+        +---incidents
+            +---migrations
+                |   __init__.py
+                |   0001_initial.py
+                |   0002_incidenttype_color.py
+                |   0003_seed_statuses.py
+            |   __init__.py
+            |   admin.py
+            |   apps.py
+            |   filters.py
+            |   models.py
+            |   permissions.py
+            |   serializers.py
+            |   signals.py
+            |   tests.py
+            |   urls.py
+            |   views.py
+        +---users
+            +---management
+                +---commands
+                    |   create_groups.py
+            +---migrations
+                |   __init__.py
+                |   0001_initial.py
+                |   0002_systemsettings.py
+                |   0003_seed_groups.py
+            |   __init__.py
+            |   admin.py
+            |   apps.py
+            |   models.py
+            |   permissions.py
+            |   serializers.py
+            |   signals.py
+            |   tests.py
+            |   urls.py
+            |   views.py
+        |   __init__.py
+    +---config
+        +---management
+            +---commands
+                |   wait_for_db.py
+        |   apps.py
+        |   settings.py
+        |   urls.py
+        |   wsgi.py
+    +---incidents
+    +---media
+    +---scripts
+        |   wait_for_db.py
+    +---static
+    +---templates
+    |   .dockerignore
+    |   Dockerfile.backend
+    |   manage.py
+    |   requirements.txt
++---docker
+    +---nginx
+        +---conf.d
+            |   default.conf
+        |   nginx.conf
+    +---postgres
+        |   init.sql
++---frontend
+    +---src
+        +---api
+            |   auth.ts
+            |   client.ts
+        +---app
+            +---components
+                +---ui
+                    |   accordion.tsx
+                    |   alert.tsx
+                    |   alert-dialog.tsx
+                    |   aspect-ratio.tsx
+                    |   avatar.tsx
+                    |   badge.tsx
+                    |   breadcrumb.tsx
+                    |   button.tsx
+                    |   calendar.tsx
+                    |   card.tsx
+                    |   carousel.tsx
+                    |   chart.tsx
+                    |   checkbox.tsx
+                    |   collapsible.tsx
+                    |   command.tsx
+                    |   context-menu.tsx
+                    |   dialog.tsx
+                    |   drawer.tsx
+                    |   dropdown-menu.tsx
+                    |   form.tsx
+                    |   hover-card.tsx
+                    |   input.tsx
+                    |   input-otp.tsx
+                    |   label.tsx
+                    |   menubar.tsx
+                    |   navigation-menu.tsx
+                    |   pagination.tsx
+                    |   popover.tsx
+                    |   progress.tsx
+                    |   radio-group.tsx
+                    |   resizable.tsx
+                    |   scroll-area.tsx
+                    |   select.tsx
+                    |   separator.tsx
+                    |   sheet.tsx
+                    |   sidebar.tsx
+                    |   skeleton.tsx
+                    |   slider.tsx
+                    |   sonner.tsx
+                    |   switch.tsx
+                    |   table.tsx
+                    |   tabs.tsx
+                    |   textarea.tsx
+                    |   toggle.tsx
+                    |   toggle-group.tsx
+                    |   tooltip.tsx
+                    |   use-mobile.ts
+                    |   utils.ts
+                |   badge.tsx
+                |   breadcrumbs.tsx
+                |   button.tsx
+                |   card.tsx
+                |   confirm-dialog.tsx
+                |   empty-state.tsx
+                |   header.tsx
+                |   incident-form.tsx
+                |   input.tsx
+                |   loading-spinner.tsx
+                |   modal.tsx
+                |   select.tsx
+                |   textarea.tsx
+                |   toast.tsx
+            +---pages
+                +---administration
+                    |   DepartmentFormModal.tsx
+                    |   IncidentTypeFormModal.tsx
+                    |   UserFormModal.tsx
+                    |   UsersTable.tsx
+                +---analytics
+                    +---hooks
+                        |   useAnalyticsData.ts
+                        |   useManagerDepartment.ts
+                        |   useReportFilters.ts
+                    |   types.ts
+                    |   utils.ts
+                |   administration.tsx
+                |   analytics.tsx
+                |   dashboard.tsx
+                |   incident-detail.tsx
+                |   incidents-list.tsx
+                |   login.tsx
+                |   profile.tsx
+            +---types
+                |   index.ts
+            +---utils
+                |   cn.ts
+                |   constants.ts
+                |   mock-data.ts
+            |   App.tsx
+        +---styles
+            |   fonts.css
+            |   index.css
+            |   tailwind.css
+            |   theme.css
+        |   main.tsx
+    |   index.html
+    |   package.json
+    |   package-lock.json
+    |   postcss.config.mjs
+    |   vite.config.ts
+|   .dockerignore
+|   .env
+|   .gitignore
+|   docker-compose.yml
+|   Dockerfile.frontend
+|   documentation.docx
+|   package.json
+|   package-lock.json
