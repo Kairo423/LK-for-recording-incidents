@@ -1,12 +1,12 @@
 # IMS — Incident Management System
-IMS (Incident Management System) — веб‑приложение для учёта и управления производственными/организационными происшествиями, с аналитикой и разграничением прав доступа.
-[Документация](./docs/documentation.docx)
-[Структура](./docs/filelist.txt)
+IMS (Incident Management System) — веб‑приложение для учёта и управления производственными/организационными происшествиями, с аналитикой и разграничением прав доступа.  
+[Документация](./docs/documentation.docx)  
+[Структура](./docs/filelist.txt)  
 
 ## Стек
-Backend: Django, Django REST Framework, drf-yasg (Swagger/Redoc), SimpleJWT (JWT-аутентификация), PostgreSQL
-Frontend: React + TypeScript + Vite, TailwindCSS / UI-компоненты
-Инфраструктура: Docker, docker-compose, Nginx
+Backend: Django, Django REST Framework, drf-yasg (Swagger/Redoc), SimpleJWT (JWT-аутентификация), PostgreSQL  
+Frontend: React + TypeScript + Vite, TailwindCSS / UI-компоненты  
+Инфраструктура: Docker, docker-compose, Nginx  
 
 ## Основные возможности
 
@@ -26,20 +26,20 @@ Frontend: React + TypeScript + Vite, TailwindCSS / UI-компоненты
 
 ### В корне:
 
-backend — Django‑проект (API, модели, миграции)
-frontend — React/Vite SPA
-docker-compose.yml — оркестрация сервисов (Postgres, backend, frontend, Nginx)
-Dockerfile.frontend, Dockerfile.backend — контейнеры
-docker — конфигурация Nginx и init‑скрипт Postgres
-documentation.docx — сгенерированная документация по проекту
+backend — Django‑проект (API, модели, миграции)  
+frontend — React/Vite SPA  
+docker-compose.yml — оркестрация сервисов (Postgres, backend, frontend, Nginx)  
+Dockerfile.frontend, Dockerfile.backend — контейнеры  
+docker — конфигурация Nginx и init‑скрипт Postgres  
+documentation.docx — сгенерированная документация по проекту  
 
 ### Ключевые модули backend:
 
-settings.py — настройки проекта, DRF, SimpleJWT
-urls.py — корневые URL, подключение приложений и Swagger
-users — пользователи, профили, подразделения, роли, JWT‑вьюхи
-incidents — модели и API для инцидентов
-api — вспомогательные эндпоинты (/health/ и пр.)
+settings.py — настройки проекта, DRF, SimpleJWT  
+urls.py — корневые URL, подключение приложений и Swagger  
+users — пользователи, профили, подразделения, роли, JWT‑вьюхи  
+incidents — модели и API для инцидентов  
+api — вспомогательные эндпоинты (/health/ и пр.)  
 
 ## Быстрый старт (локально, без Docker, НЕ для production)
 
@@ -75,12 +75,12 @@ api — вспомогательные эндпоинты (/health/ и пр.)
 
 ## Запуск через Docker Compose
 
-В корне проекта есть docker-compose.yml, который поднимает:
+В корне проекта есть docker-compose.yml, который поднимает:  
 
-postgres — БД PostgreSQL
-backend — Django + Gunicorn
-frontend — React/Vite
-nginx — обратный прокси + статика
+postgres — БД PostgreSQL  
+backend — Django + Gunicorn  
+frontend — React/Vite  
+nginx — обратный прокси + статика  
 
 1. Создайте .env в корне:
 ```
